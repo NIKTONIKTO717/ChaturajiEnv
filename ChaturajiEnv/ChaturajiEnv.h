@@ -8,6 +8,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
+#include <pybind11/iostream.h>
 #include <vector>
 #include <set>
 #include <map>
@@ -81,6 +82,8 @@ struct chessboard {
     player& current_player();
     uint count_active();
     bool make_move(action a);
+
+    std::map<position, piece*> get_board() const;
 };
 
 class ChaturajiEnv {
@@ -93,7 +96,16 @@ public:
     std::set<position> get_possible_actions_from(position from);
     std::tuple<bool, uint, bool, std::string> step(action a);
     void render(std::ostream& s = std::cout);
+    void render_p() {
+        render();
+    }
     void close(std::ostream& s = std::cout);
+    const chessboard& get_board_reference() const {
+        return _board;
+    }
+    std::map<position, piece*> get_board() const {
+        return _board.get_board();
+    }
 private:
     chessboard _board;
     uint episode_length = 0;

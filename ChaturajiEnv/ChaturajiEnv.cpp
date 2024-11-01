@@ -55,6 +55,7 @@ bool position::operator==(const position& other) const {
 
 std::ostream& operator<<(std::ostream& os, const position& pos) {
     os << '(' << pos.x << ',' << pos.y << ')';
+    py::print(pos.x, pos.y);
     return os;
 }
 
@@ -74,6 +75,7 @@ position rotate_to_local(position pos, const uint &color) {
 
 std::ostream& operator<<(std::ostream& os, const action& a) {
     os << a.from << " -> " << a.to;
+    py::print(a.from.x, a.from.y, a.to.x, a.to.y);
     return os;
 }
 
@@ -184,35 +186,6 @@ player::player(uint _color, uint _score, bool _active, bool _out_of_time) : colo
                 else break;
             }
         }
-        /*
-        for (auto& move : moves_up_left) {
-            if (move.is_valid()) {
-                valid_moves.emplace(move.rotate_to_chessboard(color));
-                if (board.board[move.rotate_to_chessboard(color)]->color != 4) break;
-            }
-            else break;
-        }
-        for (auto& move : moves_up_right) {
-            if (move.is_valid()) {
-                valid_moves.emplace(move.rotate_to_chessboard(color));
-                if (board.board[move.rotate_to_chessboard(color)]->color != 4) break;
-            }
-            else break;
-        }
-        for (auto& move : moves_down_left) {
-            if (move.is_valid()) {
-                valid_moves.emplace(move.rotate_to_chessboard(color));
-                if (board.board[move.rotate_to_chessboard(color)]->color != 4) break;
-            }
-            else break;
-        }
-        for (auto& move : moves_down_right) {
-            if (move.is_valid()) {
-                valid_moves.emplace(move.rotate_to_chessboard(color));
-                if (board.board[move.rotate_to_chessboard(color)]->color != 4) break;
-            }
-            else break;
-        }*/
         return valid_moves;
     }
     void bishop::print_piece(std::ostream& s) {
@@ -252,38 +225,6 @@ player::player(uint _color, uint _score, bool _active, bool _out_of_time) : colo
                 else break;
             }
         }
-        /*for (auto& move : moves_up) {
-            if (move.is_valid()) {
-                if (board.board[move.rotate_to_chessboard(color)]->color == color) break;
-                valid_moves.emplace(move.rotate_to_chessboard(color));
-                if (board.board[move.rotate_to_chessboard(color)]->color != 4) break;
-            }
-            else break;
-        }
-        for (auto& move : moves_down) {
-            if (move.is_valid()) {
-                if (board.board[move.rotate_to_chessboard(color)]->color == color) break;
-                valid_moves.emplace(move.rotate_to_chessboard(color));
-                if (board.board[move.rotate_to_chessboard(color)]->color != 4) break;
-            }
-            else break;
-        }
-        for (auto& move : moves_left) {
-            if (move.is_valid()) {
-                if (board.board[move.rotate_to_chessboard(color)]->color == color) break;
-                valid_moves.emplace(move.rotate_to_chessboard(color));
-                if (board.board[move.rotate_to_chessboard(color)]->color != 4) break;
-            }
-            else break;
-        }
-        for (auto& move : moves_right) {
-            if (move.is_valid()) {
-                if (board.board[move.rotate_to_chessboard(color)]->color == color) break;
-                valid_moves.emplace(move.rotate_to_chessboard(color));
-                if (board.board[move.rotate_to_chessboard(color)]->color != 4) break;
-            }
-            else break;
-        }*/
         return valid_moves;
     }
     void rock::print_piece(std::ostream& s) {
@@ -358,6 +299,14 @@ player::player(uint _color, uint _score, bool _active, bool _out_of_time) : colo
             }
         }
         return false;
+    }
+
+    std::map<position, piece*> chessboard::get_board() const {
+        std::map<position, piece*> view;
+        for (const auto& pos_piece_pair : board) {
+            view[pos_piece_pair.first] = pos_piece_pair.second.get();  // Convert unique_ptr<piece> to piece*
+        }
+        return view;
     }
 
     ChaturajiEnv::ChaturajiEnv() {
@@ -510,7 +459,7 @@ player::player(uint _color, uint _score, bool _active, bool _out_of_time) : colo
     void ChaturajiEnv::render(std::ostream& s) {
         for (uint x = 0; x < 8; x++) {
             for (uint y = 0; y < 8; y++) {
-                _board.board[{x, y}]->print_piece(std::cout);
+                _board.board[{x, y}]->print_piece(s);
                 //std::cout << (int) _board.board[{x, y}]->get_value();
                 print_color(_board.board[{x, y}]->get_color());
                 s << ' ';
@@ -531,7 +480,7 @@ player::player(uint _color, uint _score, bool _active, bool _out_of_time) : colo
         s << "Closing environment." << std::endl;
     }
 
-PYBIND11_MODULE(my_module, m) {
+PYBIND11_MODULE(chaturajienv, m) {
     // Expose the position struct to Python
     py::class_<position>(m, "Position")
         .def(py::init<>())  // Default constructor
@@ -577,22 +526,26 @@ PYBIND11_MODULE(my_module, m) {
         .def("get_value", &king::get_value)
         .def("get_moves", &king::get_moves);
 
+    py::class_<chessboard>(m, "Chessboard")
+        .def("get_board", &chessboard::get_board, py::return_value_policy::copy);
+
     // Expose the ChaturajiEnv class and its get_possible_actions() method
     py::class_<ChaturajiEnv>(m, "ChaturajiEnv")
         .def(py::init<>())  // Default constructor
         .def("reset", &ChaturajiEnv::reset,
-            "Return a tuple of sets of possible actions (positions)")
+            "Reset the board and players to initial starting position")
         .def("step", &ChaturajiEnv::step,
-            "Return a tuple of sets of possible actions (positions)")
-        .def("render", &ChaturajiEnv::render,
-            "Return a tuple of sets of possible actions (positions)")
+            "Given position from and position to, make a step if correct, if incorrect player is disqualified")
+        .def("render", &ChaturajiEnv::render_p, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>(),
+            "Render board in human readable way")
         .def("get_possible_actions", &ChaturajiEnv::get_possible_actions,
-            "Return a tuple of sets of possible actions (positions)")
+            "Return a tuple of sets of possible actions (positions) for current player")
         .def("get_possible_actions_from", &ChaturajiEnv::get_possible_actions_from,
-            "Return a tuple of sets of possible actions (positions)");
+            "Return a set of possible actions (positions) from given position")
+        .def("get_board", &ChaturajiEnv::get_board, py::return_value_policy::reference_internal);
 }
 
-int main(){
+/*int main() {
     ChaturajiEnv env = ChaturajiEnv();
     for (int i = 0; i < 100; i++) {
         env.render();
@@ -609,4 +562,4 @@ int main(){
 
         env.step(action({ x_f, y_f }, { x_t, y_t }));
     }
-}
+}*/
