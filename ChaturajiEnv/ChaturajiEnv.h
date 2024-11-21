@@ -84,6 +84,7 @@ struct chessboard {
     bool make_move(action a);
 
     std::map<position, piece*> get_board() const;
+    std::map<position, piece*> get_board_turn_rotated() const;
 };
 
 class ChaturajiEnv {

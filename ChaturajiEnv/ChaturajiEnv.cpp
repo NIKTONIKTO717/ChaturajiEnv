@@ -309,6 +309,14 @@ player::player(uint _color, uint _score, bool _active, bool _out_of_time) : colo
         return view;
     }
 
+    std::map<position, piece*> chessboard::get_board_turn_rotated() const { //rotated in a way that player on turn is in same position as red player at the beggining.
+        std::map<position, piece*> view;
+        for (const auto& pos_piece_pair : board) {
+            view[rotate_to_local(pos_piece_pair.first, turn)] = pos_piece_pair.second.get();  // Convert unique_ptr<piece> to piece*
+        }
+        return view;
+    }
+
     ChaturajiEnv::ChaturajiEnv() {
         reset();
     }
@@ -545,7 +553,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("get_board", &ChaturajiEnv::get_board, py::return_value_policy::reference_internal);
 }
 
-/*int main() {
+int main() {
     ChaturajiEnv env = ChaturajiEnv();
     for (int i = 0; i < 100; i++) {
         env.render();
@@ -562,4 +570,4 @@ PYBIND11_MODULE(chaturajienv, m) {
 
         env.step(action({ x_f, y_f }, { x_t, y_t }));
     }
-}*/
+}
