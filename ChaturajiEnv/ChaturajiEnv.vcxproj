@@ -24,6 +24,7 @@
     <ProjectGuid>{48513dfb-9e8e-499a-ae22-90a8b5aa1575}</ProjectGuid>
     <RootNamespace>ChaturajiEnv</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>chaturajienv</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
@@ -148,10 +149,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="ChaturajiEnv.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="ChaturajiEnv.h" />
+    <ClCompile Include="chaturajienv.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
