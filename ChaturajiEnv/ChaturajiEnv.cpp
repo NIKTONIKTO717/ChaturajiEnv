@@ -309,10 +309,10 @@ struct state {
 
     void printLegalMoves();
 
-    std::bitset<1284> getBinary();
+    std::vector<bool> getBinary();
 
     //gymnasium like interface
-    std::pair<std::bitset<1284>, std::string> reset() {
+    std::pair<std::vector<bool>, std::string> reset() {
         for (uint i = 0; i < 4; i++) {
             players[i] = player(i);
         }
@@ -327,7 +327,7 @@ struct state {
         return moves[rand() % moves.size()];
     }
 
-    std::tuple<std::bitset<1284>, uint, bool, bool, std::string> step(move& m) {
+    std::tuple<std::vector<bool>, uint, bool, bool, std::string> step(move& m) {
         makeMove(m);
         std::string info = "Step info";
         return { getBinary(), m.reward, finished, false, info };
@@ -716,9 +716,9 @@ void state::printLegalMoves() {
     }
 };
 
-std::bitset<1284> state::getBinary() {
-    std::bitset<1284> out_state;
-    for (short i = 0; i < 64; i++) {
+std::vector<bool> state::getBinary() {
+    std::vector<bool> out_state(1284); //20 * 64 + 4
+    for (size_t i = 0; i < 64; i++) {
         out_state[i] = players[(turn + 0) % 4]._pawn.getBoard() & (1ULL << i);
         out_state[i + 64] = players[(turn + 0) % 4]._rook.getBoard() & (1ULL << i);
         out_state[i + 128] = players[(turn + 0) % 4]._knight.getBoard() & (1ULL << i);
@@ -795,12 +795,20 @@ PYBIND11_MODULE(chaturajienv, m) {
     py::class_<position>(m, "position")
         .def(pybind11::init<uint, uint>())
         .def_readwrite("x", &position::x)
-        .def_readwrite("y", &position::y);
+        .def_readwrite("y", &position::y)
+        .def("__repr__", [](const position& p) {
+            return "(" + std::to_string(p.x) + "," + std::to_string(p.y) + ")";
+        });
     py::class_<move>(m, "move")
         .def(pybind11::init<position, position, uint>())
         .def_readwrite("from", &move::from)
         .def_readwrite("to", &move::to)
-        .def_readwrite("reward", &move::reward);
+        .def_readwrite("reward", &move::reward)
+        .def("__repr__", [](const move& m) {
+            return "<(" + std::to_string(m.from.x) + "," + std::to_string(m.from.y) +
+            ")->(" + std::to_string(m.to.x) + "," + std::to_string(m.to.y) +
+            ")," + std::to_string(m.reward) + ">";
+        });
     m.def("printColor", &printColor, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>());
     m.def("getColor", &getColor);
     m.def("make", &make);
