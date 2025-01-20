@@ -59,6 +59,26 @@ bool isValid(uint x, uint y) {
     return true;
 }
 
+// Convert 2D (x, y) to 1D bit index
+constexpr uint index(uint x, uint y, uint color = RED) {
+    D_ASSERT(x < 8 && y < 8, "wrong index");
+    switch (color) {
+    case RED: return y * 8 + x;
+    case BLUE: return (7 - y) * 8 + x;
+    case YELLOW: return (7 - x) * 8 + (7 - y);
+    case GREEN: return y * 8 + (7 - x);
+    default: D_ASSERT(false, "wrong color");
+    }
+}
+
+// Helper to convert a uint64_t board into the flat array
+int fill_layer(uint64_t board, std::vector<float>& flattened, int layer_index) {
+    for (int i = 0; i < 64; ++i) {
+        flattened[layer_index++] = (board & (1ULL << i)) ? 1.0f : 0.0f;
+    }
+    return layer_index;
+}
+
 struct move {
     position from;
     position to;
@@ -74,22 +94,15 @@ struct move {
 
     //define constructor
     move(position from, position to, uint reward = 0) : from(from), to(to), reward(reward) {}
+
+    //returns index on flatten action_mask of size 64*64
+    uint64_t getIndex() const {
+        return ((from.y << 3) | from.x) << 6 | ((to.y << 3) | to.x);
+    }
 };
 
 class Layer {
     uint64_t board; // 8x8 chessboard represented as 64 bits
-
-    // Convert 2D (x, y) to 1D bit index
-    constexpr uint index(uint x, uint y, uint color = RED) const {
-        D_ASSERT(x < 8 && y < 8, "wrong index");
-        switch (color) {
-        case RED: return y * 8 + x;
-        case BLUE: return (7 - y) * 8 + x;
-        case YELLOW: return (7 - x) * 8 + (7 - y);
-        case GREEN: return y * 8 + (7 - x);
-        default: D_ASSERT(false, "wrong color");
-        }
-    }
 
 public:
     Layer() : board(0) {} // Initialize all bits to 0
@@ -219,7 +232,7 @@ struct player {
     Layer _knight;
     Layer _bishop;
     Layer _king;
-    Layer _attacking;
+    Layer _attacking; //not used
     uint score;
     uint color;
     bool active;
@@ -238,6 +251,9 @@ struct player {
     }
 };
 
+//players in array, starting from red --> not starting from player on turn! 
+// player boards are represented in position of next turn player, f.e. if turn = BLUE, blue is in terms of (x , y) position as red at the beginning
+//turn - index of player on turn
 struct state {
     std::array<player, 4> players;
     uint turn;
@@ -252,7 +268,7 @@ struct state {
     }
 
     void nextTurn() {
-        for (uint i = 0; i < 4; i++) {
+        for (uint i = 0; i < 3; i++) { 
             turn = (turn + 1) % 4;
             for (auto& player : players) {
                 player._pawn = player._pawn.rotate_to_local(1);
@@ -301,6 +317,8 @@ struct state {
 
     std::vector<move> getLegalMoves();
 
+    py::array_t<float> getLegalMoveMask();
+
     void printBoard();
 
     void printScore();
@@ -309,7 +327,8 @@ struct state {
 
     void printLegalMoves();
 
-    std::vector<bool> getBinary();
+    //TODO: maybe remove?
+    std::vector<bool> getState();
 
     //gymnasium like interface
     std::pair<std::vector<bool>, std::string> reset() {
@@ -319,7 +338,7 @@ struct state {
         turn = RED;
         finished = false;
         std::string info = "Reset info";
-        return { getBinary(), info };
+        return { getState(), info };
     }
 
     move sample() {
@@ -327,12 +346,45 @@ struct state {
         return moves[rand() % moves.size()];
     }
 
+    //observation (new state), reward, terminated, truncated, info
     std::tuple<std::vector<bool>, uint, bool, bool, std::string> step(move& m) {
         makeMove(m);
         std::string info = "Step info";
-        return { getBinary(), m.reward, finished, false, info };
+        return { getState(), m.reward, finished, false, info };
     }
 
+    std::tuple<uint, uint, uint, uint> getScore() const {
+        return { players[turn % 4].score, players[(turn + 1) % 4].score, players[(turn + 2) % 4].score, players[(turn + 3) % 4].score };
+    }
+
+    //returns score indexed from 1st player (red)
+    std::tuple<uint, uint, uint, uint> getScoreDefault() const {
+        return { players[0].score, players[1].score, players[2].score, players[3].score };
+    }
+
+    // Convert the state into a flat vector of floats for NumPy
+    py::array_t<float> to_numpy() const {
+        std::vector<float> flattened(1280, 0.0f); // Total size: 1280 = 4 * 5 * 8 * 8
+
+        int layer_index = 0;
+        for (int i = 0; i < 4; i++) {
+            auto& player = players[(turn + i) % 4];
+            layer_index = fill_layer(player._pawn.getBoard(), flattened, layer_index);
+            layer_index = fill_layer(player._rook.getBoard(), flattened, layer_index);
+            layer_index = fill_layer(player._knight.getBoard(), flattened, layer_index);
+            layer_index = fill_layer(player._bishop.getBoard(), flattened, layer_index);
+            layer_index = fill_layer(player._king.getBoard(), flattened, layer_index);
+        }
+
+        // Return as a NumPy array
+        return py::array_t<float>(
+            { 20, 8, 8 },              // Shape (5 chanels for each player, 8, 8)
+            { 8 * 8 * sizeof(float),   // Stride for c
+             8 * sizeof(float),        // Stride for w
+             sizeof(float) },          // Stride for h
+            flattened.data()           // Pointer to data
+            );
+    }
 };
 
 //gymnasium like interface
@@ -628,6 +680,24 @@ std::vector<move> state::getLegalMoves() {
     return legalMoves;
 };
 
+// Function to generate a mask of valid moves
+py::array_t<float> state::getLegalMoveMask() {
+    std::vector<float> mask(4096, 0.0f); // 64*64
+    std::vector<move> legal_moves = getLegalMoves();
+
+    // Set mask values for legal moves
+    for (const auto& move : legal_moves) {
+            mask[move.getIndex()] = 1.0f;
+    }
+
+    // Return mask as a NumPy array
+    return py::array_t<float>(
+        { 4096 },           // Shape: (4096,)
+        { sizeof(float) },  // Stride: sizeof(float)
+        mask.data()         // Pointer to data
+        );
+}
+
 void printColor(uint c = RED) {
     if (c == RED) {
         std::cout << "R";
@@ -716,7 +786,7 @@ void state::printLegalMoves() {
     }
 };
 
-std::vector<bool> state::getBinary() {
+std::vector<bool> state::getState() {
     std::vector<bool> out_state(1284); //20 * 64 + 4
     for (size_t i = 0; i < 64; i++) {
         out_state[i] = players[(turn + 0) % 4]._pawn.getBoard() & (1ULL << i);
@@ -747,6 +817,69 @@ std::vector<bool> state::getBinary() {
     out_state[1283] = players[(turn + 3) % 4].active;
     return out_state;
 }
+
+// Struct to represent the game with a vector of states
+struct game {
+    std::vector<state> states;
+
+    int getSize() {
+        return states.size();
+    }
+
+    void addState(state& new_state) {
+        states.push_back(new_state);
+    }
+    
+    // Gives last T states of the game, skip given numebr of last states
+    py::array_t<float> to_numpy(int T, int skip = 0) const {
+        // 1 plane = 64
+        // 4 planes representing players score
+        // 4 planes prepresenting if player is active
+        // 4 planes prepresenting one-hot eoncoded turn 
+        std::vector<float> flattened(1280*T + 64*12, 0.0f); // 1 plane = 64, 4 planes 
+
+        int game_size = states.size() - skip;
+
+        for (int i = 0; i < T; i++) {
+            if (game_size > i) break;
+            auto& iterated_state = states[game_size - i];
+            int layer_index = 1280 * (T - i - 1);
+            auto& players = iterated_state.players;
+
+            for (int i = 0; i < 4; i++) {
+                auto& player = players[(iterated_state.turn + i) % 4];
+                layer_index = fill_layer(player._pawn.getBoard(), flattened, layer_index);
+                layer_index = fill_layer(player._rook.getBoard(), flattened, layer_index);
+                layer_index = fill_layer(player._knight.getBoard(), flattened, layer_index);
+                layer_index = fill_layer(player._bishop.getBoard(), flattened, layer_index);
+                layer_index = fill_layer(player._king.getBoard(), flattened, layer_index);
+            }
+        }
+        auto& last_state = states[game_size - 1];
+
+        //score planes and active planes
+        for (int p = 0; p < 4; p++) {
+            for (int i = 0; i < 64; i++) {
+                flattened[1280 * T + p * 64 + i] = (float) last_state.players[(last_state.turn + p) % 4].score;
+                flattened[1280 * T + 256 + p * 64 + i] = (float) last_state.players[(last_state.turn + p) % 4].active;
+            }
+        }
+
+        //active player plane
+        for (int i = 0; i < 64; i++) {
+            flattened[1280 * T + 512 + last_state.turn*64 + i] = 1.0f;
+        }
+
+        // Return as a NumPy array
+        return py::array_t<float>(
+            { 20 * T + 12, 8, 8 },     // Shape (5 chanels for each player + describing last state, 8, 8)
+            { 8 * 8 * sizeof(float),   // Stride for c
+             8 * sizeof(float),        // Stride for w
+             sizeof(float) },          // Stride for h
+            flattened.data()           // Pointer to data
+            );
+    }
+};
 
 
 PYBIND11_MODULE(chaturajienv, m) {
@@ -784,14 +917,22 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("isLegalMove", &state::isLegalMove)
         .def("makeMove", &state::makeMove)
         .def("getLegalMoves", &state::getLegalMoves)
+        .def("getLegalMoveMask", &state::getLegalMoveMask)
+        .def("to_numpy", &state::to_numpy)
         .def("printBoard", &state::printBoard, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("printScore", &state::printScore, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("printTurn", &state::printTurn, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("printLegalMoves", &state::printLegalMoves, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
-        .def("getState", &state::getBinary)
+        .def("getState", &state::getState)
         .def("reset", &state::reset)
         .def("sample", &state::sample)
-        .def("step", &state::step);
+        .def("step", &state::step)
+        .def("getScore", &state::getScore)
+        .def("getScoreDefault", &state::getScoreDefault);
+    py::class_<game>(m, "game")
+        .def(pybind11::init<>())
+        .def("getSize", &game::getSize)
+        .def("to_numpy", &game::to_numpy);
     py::class_<position>(m, "position")
         .def(pybind11::init<uint, uint>())
         .def_readwrite("x", &position::x)
@@ -801,14 +942,14 @@ PYBIND11_MODULE(chaturajienv, m) {
         });
     py::class_<move>(m, "move")
         .def(pybind11::init<position, position, uint>())
-        .def_readwrite("from", &move::from)
+        .def_readwrite("fr", &move::from) //from isn't accepted in python
         .def_readwrite("to", &move::to)
         .def_readwrite("reward", &move::reward)
         .def("__repr__", [](const move& m) {
             return "<(" + std::to_string(m.from.x) + "," + std::to_string(m.from.y) +
             ")->(" + std::to_string(m.to.x) + "," + std::to_string(m.to.y) +
             ")," + std::to_string(m.reward) + ">";
-        });
+         });
     m.def("printColor", &printColor, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>());
     m.def("getColor", &getColor);
     m.def("make", &make);
