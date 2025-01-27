@@ -5,6 +5,12 @@
 #include <vector>
 #include <tuple>
 #include <array>
+#include <map>
+#include <memory>
+#include <cmath>
+#include <algorithm>
+#include <numeric>
+#include <random>
 #include <python.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
@@ -72,7 +78,7 @@ constexpr uint index(uint x, uint y, uint color = RED) {
 }
 
 // Helper to convert a uint64_t board into the flat array
-int fill_layer(uint64_t board, std::vector<float>& flattened, int layer_index) {
+uint64_t fill_layer(uint64_t board, std::vector<float>& flattened, int layer_index) {
     for (int i = 0; i < 64; ++i) {
         flattened[layer_index++] = (board & (1ULL << i)) ? 1.0f : 0.0f;
     }
@@ -267,6 +273,9 @@ struct state {
         turn = RED;
     }
 
+    //copy constructor
+    state(const state& other) : players(other.players), turn(other.turn), finished(other.finished) {}
+
     void nextTurn() {
         for (uint i = 0; i < 3; i++) { 
             turn = (turn + 1) % 4;
@@ -327,18 +336,15 @@ struct state {
 
     void printLegalMoves();
 
-    //TODO: maybe remove?
-    std::vector<bool> getState();
-
     //gymnasium like interface
-    std::pair<std::vector<bool>, std::string> reset() {
+    std::pair<state, std::string> reset() {
         for (uint i = 0; i < 4; i++) {
             players[i] = player(i);
         }
         turn = RED;
         finished = false;
         std::string info = "Reset info";
-        return { getState(), info };
+        return { state(), info };
     }
 
     move sample() {
@@ -347,13 +353,18 @@ struct state {
     }
 
     //observation (new state), reward, terminated, truncated, info
-    std::tuple<std::vector<bool>, uint, bool, bool, std::string> step(move& m) {
+    std::tuple<state, uint, bool, bool, std::string> step(move& m) {
         makeMove(m);
         std::string info = "Step info";
-        return { getState(), m.reward, finished, false, info };
+        return { *this, m.reward, finished, false, info };
     }
 
     std::tuple<uint, uint, uint, uint> getScore() const {
+        return { players[turn % 4].score, players[(turn + 1) % 4].score, players[(turn + 2) % 4].score, players[(turn + 3) % 4].score };
+    }
+
+    //returns reward at the end of the game (+1 for 1st player, +0.33 for 2nd, -0.33 for 3rd and -1 for 4th)
+    std::tuple<uint, uint, uint, uint> getFinalReward() const {
         return { players[turn % 4].score, players[(turn + 1) % 4].score, players[(turn + 2) % 4].score, players[(turn + 3) % 4].score };
     }
 
@@ -682,7 +693,7 @@ std::vector<move> state::getLegalMoves() {
 
 // Function to generate a mask of valid moves
 py::array_t<float> state::getLegalMoveMask() {
-    std::vector<float> mask(4096, 0.0f); // 64*64
+    std::vector<float> mask(4097, 0.0f); // 64*64 + 1 (pass)
     std::vector<move> legal_moves = getLegalMoves();
 
     // Set mask values for legal moves
@@ -690,9 +701,16 @@ py::array_t<float> state::getLegalMoveMask() {
             mask[move.getIndex()] = 1.0f;
     }
 
+    if (players[turn].active) {
+        mask[4096] = 0.0f;
+    }
+    else {
+        mask[4096] = 1.0f;
+    }
+
     // Return mask as a NumPy array
     return py::array_t<float>(
-        { 4096 },           // Shape: (4096,)
+        { 4097 },           // Shape: (4096,)
         { sizeof(float) },  // Stride: sizeof(float)
         mask.data()         // Pointer to data
         );
@@ -786,48 +804,235 @@ void state::printLegalMoves() {
     }
 };
 
-std::vector<bool> state::getState() {
-    std::vector<bool> out_state(1284); //20 * 64 + 4
-    for (size_t i = 0; i < 64; i++) {
-        out_state[i] = players[(turn + 0) % 4]._pawn.getBoard() & (1ULL << i);
-        out_state[i + 64] = players[(turn + 0) % 4]._rook.getBoard() & (1ULL << i);
-        out_state[i + 128] = players[(turn + 0) % 4]._knight.getBoard() & (1ULL << i);
-        out_state[i + 192] = players[(turn + 0) % 4]._bishop.getBoard() & (1ULL << i);
-        out_state[i + 256] = players[(turn + 0) % 4]._king.getBoard() & (1ULL << i);
-        out_state[i + 320] = players[(turn + 1) % 4]._pawn.getBoard() & (1ULL << i);
-        out_state[i + 384] = players[(turn + 1) % 4]._rook.getBoard() & (1ULL << i);
-        out_state[i + 448] = players[(turn + 1) % 4]._knight.getBoard() & (1ULL << i);
-        out_state[i + 512] = players[(turn + 1) % 4]._bishop.getBoard() & (1ULL << i);
-        out_state[i + 576] = players[(turn + 1) % 4]._king.getBoard() & (1ULL << i);
-        out_state[i + 640] = players[(turn + 2) % 4]._pawn.getBoard() & (1ULL << i);
-        out_state[i + 704] = players[(turn + 2) % 4]._rook.getBoard() & (1ULL << i);
-        out_state[i + 768] = players[(turn + 2) % 4]._knight.getBoard() & (1ULL << i);
-        out_state[i + 832] = players[(turn + 2) % 4]._bishop.getBoard() & (1ULL << i);
-        out_state[i + 896] = players[(turn + 2) % 4]._king.getBoard() & (1ULL << i);
-        out_state[i + 960] = players[(turn + 3) % 4]._pawn.getBoard() & (1ULL << i);
-        out_state[i + 1024] = players[(turn + 3) % 4]._rook.getBoard() & (1ULL << i);
-        out_state[i + 1088] = players[(turn + 3) % 4]._knight.getBoard() & (1ULL << i);
-        out_state[i + 1152] = players[(turn + 3) % 4]._bishop.getBoard() & (1ULL << i);
-        out_state[i + 1216] = players[(turn + 3) % 4]._king.getBoard() & (1ULL << i);
+// Struct to represent MCTS nodes
+struct MCTSNode {
+    std::map<move, std::tuple<float, float, float, float>> W;  // Total value of each action
+    std::map<move, int> N;    // Visit count of each action
+    std::map<move, float> P;    // probability of taking each action
+    std::map<move, std::shared_ptr<MCTSNode>> children; // Child nodes for each action
+    MCTSNode* parent = nullptr; // Pointer to the parent node
+    state current_state;        // Game state at this node
+    bool is_terminal = false;   // Whether this is a terminal node
+    std::tuple<float, float, float, float> value{ 0.0f, 0.0f, 0.0f, 0.0f };         // Value of this node (only used for backpropagation)
+    std::unordered_map<move, float> action_probabilities; // Policy network output: P(s, a) for each action.
+    int N_total = 0;
+
+    MCTSNode(const state& s, MCTSNode* p = nullptr) : current_state(s), parent(p) {}
+
+    
+    //PUCT (https://medium.com/oracledevs/lessons-from-alphazero-part-3-parameter-tweaking-4dceb78ed1e5)
+    move select_best_action(double c_puct = 4) const { //4 is suggestion from medium.com article
+        move best_action;
+        double best_score = -std::numeric_limits<double>::infinity();
+
+        for (auto it = N.begin(); it != N.end(); ++it) {
+            auto a = it->first;  // action
+            auto n = it->second; // number of visits
+
+            //double q = std::get<0>(W.at(a)) / (n + 1e-6);  // Q-value (mean value of next state)
+            //double u = c_puct * action_probabilities.at(a) * sqrt(N_total) / (n + 1e-6);
+            //double score = q + u;
+            double score = (std::get<0>(W.at(a)) + c_puct * P.at(a) * sqrt(N_total)) / (n + 1e-6);
+
+            if (score > best_score) {
+                best_score = score;
+                best_action = a;
+            }
+        }
+
+        return best_action;
     }
-    //4 bits representing if player is active
-    out_state[1280] = players[(turn + 0) % 4].active;
-    out_state[1281] = players[(turn + 1) % 4].active;
-    out_state[1282] = players[(turn + 2) % 4].active;
-    out_state[1283] = players[(turn + 3) % 4].active;
-    return out_state;
-}
+
+    // Total number of visits for this node
+    int N_total() const {
+        return std::accumulate(N.begin(), N.end(), 0, [](int sum, const auto& pair) {
+            return sum + pair.second;
+            });
+    }
+
+    // Expand a node by adding child nodes for all legal moves
+    void expand() {
+        for (auto& move : current_state.getLegalMoves()) {
+            if (children.find(move) == children.end()) {
+                state state_copy = current_state;
+                state_copy.step(move);
+                children[move] = std::make_shared<MCTSNode>(state_copy, this);
+            }
+        }
+    }
+};
 
 // Struct to represent the game with a vector of states
 struct game {
     std::vector<state> states;
+    std::vector<py::array_t<float>> probabilties; //policies used when selecting game move
+    std::shared_ptr<MCTSNode> root; // Root of the MCTS tree
+    std::shared_ptr<MCTSNode> current_search_position; // current position, which will be used when called get_evaluate_sample()
+    uint n_of_finished = 0; //number of finished games
+    std::deque<move> trajectory;
 
     int getSize() {
         return states.size();
     }
 
-    void addState(state& new_state) {
+    void addState(state new_state) {
         states.push_back(new_state);
+    }
+
+    game() {
+        states.push_back(state());
+        root = std::make_shared<MCTSNode>(state());
+    }
+
+    // Generate input for the neural network (last n states)
+    py::array_t<float> get_evaluate_sample(size_t n) {
+        size_t start = states.size() > n ? states.size() - n : 0;
+        std::vector<state> last_states(states.begin() + start, states.end());
+        return state::to_numpy(last_states);
+    }
+
+    move find_move_for_node(const std::map<move, std::shared_ptr<MCTSNode>>& children, MCTSNode* node) {
+        // Iterate through the map and compare node pointers
+        for (const auto& entry : children) {
+            if (entry.second.get() == node) {
+                return entry.first;  // Return the move that maps to this node
+            }
+        }
+
+        throw std::runtime_error("Node not found in the map");
+    }
+
+    //P is expected to be already with applied mask and with sum = 1
+    void give_evaluated_sample(py::array_t<float>& P, py::array_t<float>& V) {
+        /*current_search_position is already leaf node,*/
+
+        py::buffer_info P_buf = P.request();
+        py::buffer_info V_buf = V.request();
+
+        if (P_buf.size != 4096) {
+            throw std::runtime_error("Policy head output must have 4096 elements");
+        }
+        if (V_buf.size != 4) {
+            throw std::runtime_error("Value head output must have 4 elements");
+        }
+
+        float* P_ptr = static_cast<float*>(P_buf.ptr);
+        float* V_ptr = static_cast<float*>(V_buf.ptr);
+
+        auto* node = current_search_position.get();
+
+        node->value = std::make_tuple(V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3]);
+
+        int rotate_index = 0;
+
+
+        //TODO find easy way how to do this...
+        for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
+            int child_turn = node->current_state.turn;  // rotates index of players - (current player is player 4 in parent node...)
+            node = node->parent;
+            int parent_turn = node->current_state.turn; 
+            rotate_index += (parent_turn + 4 - child_turn) % 4;  //difference between parent and child
+            std::get<0>(node->W[*it]) = V_ptr[rotate_index];
+            std::get<1>(node->W[*it]) = V_ptr[(1 + rotate_index) % 4];
+            std::get<2>(node->W[*it]) = V_ptr[(2 + rotate_index) % 4];
+            std::get<3>(node->W[*it]) = V_ptr[(3 + rotate_index) % 4];
+            node->N[*it]++;
+        }
+
+
+        /*Start again from root and do while not reached leaf node...*/
+
+        auto next_move = node->select_best_action();
+
+        if (node->children.find(next_move) != node->children.end()) { //exists
+            current_search_position = node->children[next_move];
+        }
+        else { //doesn't exist
+            state new_state = node->current_state;
+            new_state.step(next_move);
+            node->children[next_move] = std::make_shared<MCTSNode>(std::move(new_state), this);
+            current_search_position = node->children[next_move];
+        }
+
+        if (current_search_position->current_state.finished) {
+            /*If leaf node...*/
+            node->value = std::make_tuple(V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3]);
+
+            int rotate_index = 3; // rotates index of players - (current player is player 4 in parent node...)
+
+            for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
+                node = node->parent;
+                std::get<0>(node->W[*it]) = V_ptr[rotate_index];
+                std::get<1>(node->W[*it]) = V_ptr[(1 + rotate_index) % 4];
+                std::get<2>(node->W[*it]) = V_ptr[(2 + rotate_index) % 4];
+                std::get<3>(node->W[*it]) = V_ptr[(3 + rotate_index) % 4];
+                rotate_index = (rotate_index + 3) % 4;
+                node->N[*it]++;
+            }
+        }
+    }
+
+    // Backpropagate the results of a rollout
+    void give_evaluated_sample(const std::vector<double>& P, double V) {
+        auto* node = root.get();
+        node->value = V;
+
+        // Backpropagate along the tree
+        while (node) {
+            for (const auto& [move, p] : P) {
+                node->W[move] += V; // Accumulate value
+                node->N[move] += 1; // Increment visit count
+            }
+            V = -V; // Invert the value for the opponent
+            node = node->parent;
+        }
+    }
+
+    // Perform a deterministic step by choosing the action with the highest visit count
+    bool step_deterministic() {
+        auto best_action = root->select_best_action(0.0); // No exploration
+        root = root->children[best_action]; // Reuse the child node as the new root
+        states.push_back(root->current_state);
+
+        // Clear other branches to free memory
+        root->parent = nullptr;
+        return root->is_terminal;
+    }
+
+    // Perform a stochastic step based on policy (pi ~ N^(1/temp))
+    bool step_stochastically(double temperature = 1.0) {
+        // TODO: Implement stochastic sampling based on N^(1/temp)
+        return false;
+    }
+
+    // Perform rollouts
+    int rollout(int num_rollouts, const std::function<std::pair<std::vector<double>, double>(state&)>& nn_evaluator) {
+        int completed_rollouts = 0;
+
+        for (int i = 0; i < num_rollouts; ++i) {
+            auto* node = root.get();
+
+            // Selection and expansion
+            while (!node->is_terminal && !node->children.empty()) {
+                auto best_action = node->select_best_action();
+                node = node->children[best_action].get();
+            }
+
+            // Expand node if it's not terminal
+            if (!node->is_terminal) {
+                node->expand();
+            }
+
+            // Evaluate leaf node using neural network
+            auto [P, V] = nn_evaluator(node->current_state);
+
+            // Backpropagate results
+            give_evaluated_sample(P, V);
+
+            ++completed_rollouts;
+        }
+
+        return completed_rollouts;
     }
     
     // Gives last T states of the game, skip given numebr of last states
@@ -838,10 +1043,10 @@ struct game {
         // 4 planes prepresenting one-hot eoncoded turn 
         std::vector<float> flattened(1280*T + 64*12, 0.0f); // 1 plane = 64, 4 planes 
 
-        int game_size = states.size() - skip;
+        int game_size = states.size() - skip - 1;
 
         for (int i = 0; i < T; i++) {
-            if (game_size > i) break;
+            if (game_size < i) break;
             auto& iterated_state = states[game_size - i];
             int layer_index = 1280 * (T - i - 1);
             auto& players = iterated_state.players;
@@ -855,7 +1060,7 @@ struct game {
                 layer_index = fill_layer(player._king.getBoard(), flattened, layer_index);
             }
         }
-        auto& last_state = states[game_size - 1];
+        auto& last_state = states[game_size];
 
         //score planes and active planes
         for (int p = 0; p < 4; p++) {
@@ -932,6 +1137,7 @@ PYBIND11_MODULE(chaturajienv, m) {
     py::class_<game>(m, "game")
         .def(pybind11::init<>())
         .def("getSize", &game::getSize)
+        .def("addState", &game::addState)
         .def("to_numpy", &game::to_numpy);
     py::class_<position>(m, "position")
         .def(pybind11::init<uint, uint>())
@@ -957,6 +1163,9 @@ PYBIND11_MODULE(chaturajienv, m) {
 
 int main() {
     state s;
+    game g;
+    g.addState(s);
+    auto val = g.to_numpy(1);
     s.printScore();
     s.printTurn();
     s.printBoard();
