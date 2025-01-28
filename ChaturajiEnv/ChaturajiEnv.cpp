@@ -190,7 +190,7 @@ public:
     }
 
     uint countBits() const {
-        return __builtin_popcountll(board); // GCC/Clang
+        return (uint) __builtin_popcountll(board); // GCC/Clang
     }
 
     // Print the board for debugging
@@ -842,7 +842,7 @@ py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int 
     // 4 planes prepresenting one-hot eoncoded turn 
     std::vector<float> flattened(1280 * T + 64 * 12, 0.0f); // 1 plane = 64, 4 planes 
 
-    int game_size = states.size() - skip - 1;
+    int game_size = (int) states.size() - skip - 1;
 
     for (int i = 0; i < T; i++) {
         if (game_size < i) break;
@@ -893,7 +893,7 @@ struct MCTSNode {
     MCTSNode* parent = nullptr; // Pointer to the parent node
     state current_state;        // Game state at this node
     bool is_terminal = false;   // Whether this is a terminal node
-    bool is_leaf = true;   // Whether this is a terminal node
+    bool is_leaf = true;   // Whether this is a leaf node
     std::tuple<float, float, float, float> value{ 0.0f, 0.0f, 0.0f, 0.0f };         // Value of this node (only used for backpropagation)
     std::map<move, float> action_probabilities; // Policy network output: P(s, a) for each action.
     int N_total = 0;
@@ -932,8 +932,13 @@ struct MCTSNode {
                 state_copy.step(move);
                 children[move] = std::make_shared<MCTSNode>(state_copy, this);
                 children[move]->is_terminal = state_copy.finished;
+                if (state_copy.finished) {
+                    children[move]->is_terminal = true;
+                    children[move]->value = state_copy.getFinalReward();
+                }
                 children[move]->parent = this;
                 N[move] = 0;
+                W[move] = { 0.0f, 0.0f, 0.0f, 0.0f };
                 P[move] = P_ptr[move.getIndex()];
             }
         }
@@ -949,25 +954,33 @@ struct game {
     uint n_of_finished = 0; //number of finished games
     std::deque<move> trajectory;
 
-    int getSize() {
-        return states.size();
+    int size() {
+        return (int) states.size();
     }
 
-    void addState(state new_state) {
+    state get(int n) {
+        if (n >= 0)
+            return states[n];
+        else 
+            return states[states.size() - n];
+    }
+
+    void add_state(state new_state) {
         states.push_back(new_state);
     }
 
     game() {
         states.push_back(state());
         root = std::make_shared<MCTSNode>(state());
+        current_search_position = root;
     }
 
     // Generate input for the neural network (last n states)
     py::array_t<float> get_evaluate_sample(int T, int skip) {
         std::vector<state> last_states(states); //starts with already "played" states
-        auto node_ptr = root;
+        auto node_ptr = root.get();
         for (auto it = trajectory.begin(); it != trajectory.end(); ++it) { // add MCTS states
-            node_ptr = node_ptr->children[*it];
+            node_ptr = node_ptr->children[*it].get();
             last_states.push_back(node_ptr->current_state);
         }
 
@@ -987,7 +1000,7 @@ struct game {
 
     //P is expected to be already with applied mask and with sum = 1
     void give_evaluated_sample(py::array_t<float>& P, py::array_t<float>& V) {
-        /*current_search_position is already leaf node,*/
+        /*current_search_position is already leaf node, not expanded*/
 
         py::buffer_info P_buf = P.request();
         py::buffer_info V_buf = V.request();
@@ -1003,7 +1016,6 @@ struct game {
         float* V_ptr = static_cast<float*>(V_buf.ptr);
 
         auto* node = current_search_position.get();
-
         node->value = std::make_tuple(V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3]);
         node->expand(P_ptr);
         node->is_leaf = false;
@@ -1024,13 +1036,14 @@ struct game {
 
         /*Start again from root and do while not reached leaf node...*/
         trajectory.clear();
-        auto node_ptr = root;
+        current_search_position = root;
 
-        while (!node_ptr->is_leaf) {
-            auto next_move = node_ptr->select_best_action();
+        while (!current_search_position->is_leaf) {
+            auto next_move = current_search_position->select_best_action();
             trajectory.push_back(next_move);
-            current_search_position = node_ptr->children[next_move];
+            current_search_position = current_search_position->children[next_move];
             if (current_search_position->is_terminal) { //if terminal we can determine value without evaluating by nn
+                std::cout << "Found terminal state" << std::endl;
                 current_search_position->value = current_search_position->current_state.getFinalReward();
 
                 float values[4] = { //for simpler manipulation, tuple requires <n> on compile time...
@@ -1053,10 +1066,9 @@ struct game {
                 }
 
                 trajectory.clear();
-                node_ptr = root;
+                current_search_position = root;
             }
         }
-
         /*We are here at leaf node*/
     }
 
@@ -1088,7 +1100,7 @@ struct game {
         return false;
     }
     
-    // Gives last T states of the game, skip given numebr of last states
+    // Gives last T states of the game, skip given number of last states
     py::array_t<float> to_numpy(int T, int skip = 0) const {
         return states_to_numpy(states, T, skip);
     }
@@ -1143,8 +1155,12 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("getScoreDefault", &state::getScoreDefault);
     py::class_<game>(m, "game")
         .def(pybind11::init<>())
-        .def("getSize", &game::getSize)
-        .def("addState", &game::addState)
+        .def("size", &game::size)
+        .def("get", &game::get)
+        .def("add_state", &game::add_state)
+        .def("get_evaluate_sample", &game::get_evaluate_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("give_evaluated_sample", &game::give_evaluated_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("step_deterministic", &game::step_deterministic)
         .def("to_numpy", &game::to_numpy);
     py::class_<position>(m, "position")
         .def(pybind11::init<uint, uint>())
@@ -1171,7 +1187,6 @@ PYBIND11_MODULE(chaturajienv, m) {
 int main() {
     state s;
     game g;
-    g.addState(s);
     auto val = g.to_numpy(1);
     s.printScore();
     s.printTurn();
