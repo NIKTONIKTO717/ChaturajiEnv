@@ -78,7 +78,7 @@ constexpr uint index(uint x, uint y, uint color = RED) {
 }
 
 // Helper to convert a uint64_t board into the flat array
-uint64_t fill_layer(uint64_t board, std::vector<float>& flattened, int layer_index) {
+uint fill_layer(uint64_t board, std::vector<float>& flattened, uint layer_index) {
     for (int i = 0; i < 64; ++i) {
         flattened[layer_index++] = (board & (1ULL << i)) ? 1.0f : 0.0f;
     }
@@ -93,6 +93,11 @@ struct move {
     //define operator==
     bool operator==(const move& m) const {
         return std::tie(from.x, from.y, to.x, to.y) == std::tie(m.from.x, m.from.y, m.to.x, m.to.y);
+    }
+
+    //define operator<
+    bool operator<(const move& m) const {
+        return std::tie(from.x, from.y, to.x, to.y) < std::tie(m.from.x, m.from.y, m.to.x, m.to.y);
     }
 
     //default constructor
@@ -363,9 +368,34 @@ struct state {
         return { players[turn % 4].score, players[(turn + 1) % 4].score, players[(turn + 2) % 4].score, players[(turn + 3) % 4].score };
     }
 
-    //returns reward at the end of the game (+1 for 1st player, +0.33 for 2nd, -0.33 for 3rd and -1 for 4th)
-    std::tuple<uint, uint, uint, uint> getFinalReward() const {
-        return { players[turn % 4].score, players[(turn + 1) % 4].score, players[(turn + 2) % 4].score, players[(turn + 3) % 4].score };
+    //returns reward at the end of the game
+    std::tuple<float, float, float, float> getFinalReward() const {
+        // (+1 for 1st player, +0.33 for 2nd, -0.33 for 3rd and -1 for 4th)
+        std::vector<float> rank_rewards = { 1.0f, 0.33f, -0.33f, -1.0f };
+
+        std::vector<std::pair<uint, int>> scores; // {score, player_index}
+        for (int i = 0; i < 4; ++i) {
+            scores.emplace_back(players[(turn + i) % 4].score, i);
+        }
+        std::sort(scores.begin(), scores.end(), [](const auto& a, const auto& b) {
+            return a.first > b.first; // Higher scores come first
+        });
+
+        // Assign rewards, considering ties
+        std::vector<float> rewards(4, 0.0f);
+        for (int i = 0; i < 4;) {
+            // Find the range of tied players
+            int j = i;
+            while (j < 4 && scores[j].first == scores[i].first) {
+                ++j;
+            }
+            float avg_reward = std::accumulate(rank_rewards.begin() + i, rank_rewards.begin() + j, 0.0f) / (j - i);
+            for (int k = i; k < j; ++k) {
+                rewards[scores[k].second] = avg_reward;
+            }
+            i = j;
+        }
+        return { rewards[0], rewards[1], rewards[2], rewards[3] };
     }
 
     //returns score indexed from 1st player (red)
@@ -377,7 +407,7 @@ struct state {
     py::array_t<float> to_numpy() const {
         std::vector<float> flattened(1280, 0.0f); // Total size: 1280 = 4 * 5 * 8 * 8
 
-        int layer_index = 0;
+        uint layer_index = 0;
         for (int i = 0; i < 4; i++) {
             auto& player = players[(turn + i) % 4];
             layer_index = fill_layer(player._pawn.getBoard(), flattened, layer_index);
@@ -804,6 +834,56 @@ void state::printLegalMoves() {
     }
 };
 
+// Gives last T states of the game, skip given number of last states
+py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int skip = 0) {
+    // 1 plane = 64
+    // 4 planes representing players score
+    // 4 planes prepresenting if player is active
+    // 4 planes prepresenting one-hot eoncoded turn 
+    std::vector<float> flattened(1280 * T + 64 * 12, 0.0f); // 1 plane = 64, 4 planes 
+
+    int game_size = states.size() - skip - 1;
+
+    for (int i = 0; i < T; i++) {
+        if (game_size < i) break;
+        auto& iterated_state = states[game_size - i];
+        int layer_index = 1280 * (T - i - 1);
+        auto& players = iterated_state.players;
+
+        for (int i = 0; i < 4; i++) {
+            auto& player = players[(iterated_state.turn + i) % 4];
+            layer_index = fill_layer(player._pawn.getBoard(), flattened, layer_index);
+            layer_index = fill_layer(player._rook.getBoard(), flattened, layer_index);
+            layer_index = fill_layer(player._knight.getBoard(), flattened, layer_index);
+            layer_index = fill_layer(player._bishop.getBoard(), flattened, layer_index);
+            layer_index = fill_layer(player._king.getBoard(), flattened, layer_index);
+        }
+    }
+    auto& last_state = states[game_size];
+
+    //score planes and active planes
+    for (int p = 0; p < 4; p++) {
+        for (int i = 0; i < 64; i++) {
+            flattened[1280 * T + p * 64 + i] = (float)last_state.players[(last_state.turn + p) % 4].score;
+            flattened[1280 * T + 256 + p * 64 + i] = (float)last_state.players[(last_state.turn + p) % 4].active;
+        }
+    }
+
+    //active player plane
+    for (int i = 0; i < 64; i++) {
+        flattened[1280 * T + 512 + last_state.turn * 64 + i] = 1.0f;
+    }
+
+    // Return as a NumPy array
+    return py::array_t<float>(
+        { 20 * T + 12, 8, 8 },     // Shape (5 chanels for each player + describing last state, 8, 8)
+        { 8 * 8 * sizeof(float),   // Stride for c
+         8 * sizeof(float),        // Stride for w
+         sizeof(float) },          // Stride for h
+        flattened.data()           // Pointer to data
+        );
+}
+
 // Struct to represent MCTS nodes
 struct MCTSNode {
     std::map<move, std::tuple<float, float, float, float>> W;  // Total value of each action
@@ -813,8 +893,9 @@ struct MCTSNode {
     MCTSNode* parent = nullptr; // Pointer to the parent node
     state current_state;        // Game state at this node
     bool is_terminal = false;   // Whether this is a terminal node
+    bool is_leaf = true;   // Whether this is a terminal node
     std::tuple<float, float, float, float> value{ 0.0f, 0.0f, 0.0f, 0.0f };         // Value of this node (only used for backpropagation)
-    std::unordered_map<move, float> action_probabilities; // Policy network output: P(s, a) for each action.
+    std::map<move, float> action_probabilities; // Policy network output: P(s, a) for each action.
     int N_total = 0;
 
     MCTSNode(const state& s, MCTSNode* p = nullptr) : current_state(s), parent(p) {}
@@ -843,20 +924,17 @@ struct MCTSNode {
         return best_action;
     }
 
-    // Total number of visits for this node
-    int N_total() const {
-        return std::accumulate(N.begin(), N.end(), 0, [](int sum, const auto& pair) {
-            return sum + pair.second;
-            });
-    }
-
     // Expand a node by adding child nodes for all legal moves
-    void expand() {
+    void expand(float* P_ptr) {
         for (auto& move : current_state.getLegalMoves()) {
             if (children.find(move) == children.end()) {
                 state state_copy = current_state;
                 state_copy.step(move);
                 children[move] = std::make_shared<MCTSNode>(state_copy, this);
+                children[move]->is_terminal = state_copy.finished;
+                children[move]->parent = this;
+                N[move] = 0;
+                P[move] = P_ptr[move.getIndex()];
             }
         }
     }
@@ -885,10 +963,15 @@ struct game {
     }
 
     // Generate input for the neural network (last n states)
-    py::array_t<float> get_evaluate_sample(size_t n) {
-        size_t start = states.size() > n ? states.size() - n : 0;
-        std::vector<state> last_states(states.begin() + start, states.end());
-        return state::to_numpy(last_states);
+    py::array_t<float> get_evaluate_sample(int T, int skip) {
+        std::vector<state> last_states(states); //starts with already "played" states
+        auto node_ptr = root;
+        for (auto it = trajectory.begin(); it != trajectory.end(); ++it) { // add MCTS states
+            node_ptr = node_ptr->children[*it];
+            last_states.push_back(node_ptr->current_state);
+        }
+
+        return states_to_numpy(last_states, T, skip);
     }
 
     move find_move_for_node(const std::map<move, std::shared_ptr<MCTSNode>>& children, MCTSNode* node) {
@@ -922,76 +1005,76 @@ struct game {
         auto* node = current_search_position.get();
 
         node->value = std::make_tuple(V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3]);
+        node->expand(P_ptr);
+        node->is_leaf = false;
 
-        int rotate_index = 0;
+        int leaf_turn = node->current_state.turn;
 
-
-        //TODO find easy way how to do this...
         for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
-            int child_turn = node->current_state.turn;  // rotates index of players - (current player is player 4 in parent node...)
             node = node->parent;
-            int parent_turn = node->current_state.turn; 
-            rotate_index += (parent_turn + 4 - child_turn) % 4;  //difference between parent and child
-            std::get<0>(node->W[*it]) = V_ptr[rotate_index];
-            std::get<1>(node->W[*it]) = V_ptr[(1 + rotate_index) % 4];
-            std::get<2>(node->W[*it]) = V_ptr[(2 + rotate_index) % 4];
-            std::get<3>(node->W[*it]) = V_ptr[(3 + rotate_index) % 4];
+            int current_turn = node->current_state.turn; 
+            // get<n> = V_ptr[4+n-turn_current+turn_leaf % 4]
+            std::get<0>(node->W[*it]) = V_ptr[(4 - current_turn + leaf_turn) % 4];
+            std::get<1>(node->W[*it]) = V_ptr[(5 - current_turn + leaf_turn) % 4];
+            std::get<2>(node->W[*it]) = V_ptr[(6 - current_turn + leaf_turn) % 4];
+            std::get<3>(node->W[*it]) = V_ptr[(7 - current_turn + leaf_turn) % 4];
             node->N[*it]++;
+            node->N_total++;
         }
-
 
         /*Start again from root and do while not reached leaf node...*/
+        trajectory.clear();
+        auto node_ptr = root;
 
-        auto next_move = node->select_best_action();
+        while (!node_ptr->is_leaf) {
+            auto next_move = node_ptr->select_best_action();
+            trajectory.push_back(next_move);
+            current_search_position = node_ptr->children[next_move];
+            if (current_search_position->is_terminal) { //if terminal we can determine value without evaluating by nn
+                current_search_position->value = current_search_position->current_state.getFinalReward();
 
-        if (node->children.find(next_move) != node->children.end()) { //exists
-            current_search_position = node->children[next_move];
-        }
-        else { //doesn't exist
-            state new_state = node->current_state;
-            new_state.step(next_move);
-            node->children[next_move] = std::make_shared<MCTSNode>(std::move(new_state), this);
-            current_search_position = node->children[next_move];
-        }
+                float values[4] = { //for simpler manipulation, tuple requires <n> on compile time...
+                    std::get<0>(current_search_position->value),
+                    std::get<1>(current_search_position->value),
+                    std::get<2>(current_search_position->value),
+                    std::get<3>(current_search_position->value)
+                };
 
-        if (current_search_position->current_state.finished) {
-            /*If leaf node...*/
-            node->value = std::make_tuple(V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3]);
+                for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
+                    node = node->parent;
+                    int current_turn = node->current_state.turn;
+                    // get<n> = V_ptr[4+n-turn_current+turn_leaf % 4]
+                    std::get<0>(node->W[*it]) = values[(4 - current_turn + leaf_turn) % 4];
+                    std::get<1>(node->W[*it]) = values[(5 - current_turn + leaf_turn) % 4];
+                    std::get<2>(node->W[*it]) = values[(6 - current_turn + leaf_turn) % 4];
+                    std::get<3>(node->W[*it]) = values[(7 - current_turn + leaf_turn) % 4];
+                    node->N[*it]++;
+                    node->N_total++;
+                }
 
-            int rotate_index = 3; // rotates index of players - (current player is player 4 in parent node...)
-
-            for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
-                node = node->parent;
-                std::get<0>(node->W[*it]) = V_ptr[rotate_index];
-                std::get<1>(node->W[*it]) = V_ptr[(1 + rotate_index) % 4];
-                std::get<2>(node->W[*it]) = V_ptr[(2 + rotate_index) % 4];
-                std::get<3>(node->W[*it]) = V_ptr[(3 + rotate_index) % 4];
-                rotate_index = (rotate_index + 3) % 4;
-                node->N[*it]++;
+                trajectory.clear();
+                node_ptr = root;
             }
         }
+
+        /*We are here at leaf node*/
     }
 
-    // Backpropagate the results of a rollout
-    void give_evaluated_sample(const std::vector<double>& P, double V) {
-        auto* node = root.get();
-        node->value = V;
-
-        // Backpropagate along the tree
-        while (node) {
-            for (const auto& [move, p] : P) {
-                node->W[move] += V; // Accumulate value
-                node->N[move] += 1; // Increment visit count
-            }
-            V = -V; // Invert the value for the opponent
-            node = node->parent;
-        }
-    }
-
-    // Perform a deterministic step by choosing the action with the highest visit count
+    // Perform a deterministic step by choosing the action with the highest N
     bool step_deterministic() {
-        auto best_action = root->select_best_action(0.0); // No exploration
-        root = root->children[best_action]; // Reuse the child node as the new root
+        if (root->is_terminal) //if terminal, do nothing
+            return true;
+        int best_n = -std::numeric_limits<int>::infinity();
+        move best_a;
+        for (auto it = root->N.begin(); it != root->N.end(); ++it) {
+            auto a = it->first; // move
+            auto n = it->second; // number of visits
+            if (n > best_n) {
+                best_n = n;
+                best_a = a;
+            }
+        }
+        root = root->children[best_a]; // Reuse the child node as the new root
         states.push_back(root->current_state);
 
         // Clear other branches to free memory
@@ -1004,85 +1087,10 @@ struct game {
         // TODO: Implement stochastic sampling based on N^(1/temp)
         return false;
     }
-
-    // Perform rollouts
-    int rollout(int num_rollouts, const std::function<std::pair<std::vector<double>, double>(state&)>& nn_evaluator) {
-        int completed_rollouts = 0;
-
-        for (int i = 0; i < num_rollouts; ++i) {
-            auto* node = root.get();
-
-            // Selection and expansion
-            while (!node->is_terminal && !node->children.empty()) {
-                auto best_action = node->select_best_action();
-                node = node->children[best_action].get();
-            }
-
-            // Expand node if it's not terminal
-            if (!node->is_terminal) {
-                node->expand();
-            }
-
-            // Evaluate leaf node using neural network
-            auto [P, V] = nn_evaluator(node->current_state);
-
-            // Backpropagate results
-            give_evaluated_sample(P, V);
-
-            ++completed_rollouts;
-        }
-
-        return completed_rollouts;
-    }
     
     // Gives last T states of the game, skip given numebr of last states
     py::array_t<float> to_numpy(int T, int skip = 0) const {
-        // 1 plane = 64
-        // 4 planes representing players score
-        // 4 planes prepresenting if player is active
-        // 4 planes prepresenting one-hot eoncoded turn 
-        std::vector<float> flattened(1280*T + 64*12, 0.0f); // 1 plane = 64, 4 planes 
-
-        int game_size = states.size() - skip - 1;
-
-        for (int i = 0; i < T; i++) {
-            if (game_size < i) break;
-            auto& iterated_state = states[game_size - i];
-            int layer_index = 1280 * (T - i - 1);
-            auto& players = iterated_state.players;
-
-            for (int i = 0; i < 4; i++) {
-                auto& player = players[(iterated_state.turn + i) % 4];
-                layer_index = fill_layer(player._pawn.getBoard(), flattened, layer_index);
-                layer_index = fill_layer(player._rook.getBoard(), flattened, layer_index);
-                layer_index = fill_layer(player._knight.getBoard(), flattened, layer_index);
-                layer_index = fill_layer(player._bishop.getBoard(), flattened, layer_index);
-                layer_index = fill_layer(player._king.getBoard(), flattened, layer_index);
-            }
-        }
-        auto& last_state = states[game_size];
-
-        //score planes and active planes
-        for (int p = 0; p < 4; p++) {
-            for (int i = 0; i < 64; i++) {
-                flattened[1280 * T + p * 64 + i] = (float) last_state.players[(last_state.turn + p) % 4].score;
-                flattened[1280 * T + 256 + p * 64 + i] = (float) last_state.players[(last_state.turn + p) % 4].active;
-            }
-        }
-
-        //active player plane
-        for (int i = 0; i < 64; i++) {
-            flattened[1280 * T + 512 + last_state.turn*64 + i] = 1.0f;
-        }
-
-        // Return as a NumPy array
-        return py::array_t<float>(
-            { 20 * T + 12, 8, 8 },     // Shape (5 chanels for each player + describing last state, 8, 8)
-            { 8 * 8 * sizeof(float),   // Stride for c
-             8 * sizeof(float),        // Stride for w
-             sizeof(float) },          // Stride for h
-            flattened.data()           // Pointer to data
-            );
+        return states_to_numpy(states, T, skip);
     }
 };
 
@@ -1128,7 +1136,6 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("printScore", &state::printScore, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("printTurn", &state::printTurn, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("printLegalMoves", &state::printLegalMoves, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
-        .def("getState", &state::getState)
         .def("reset", &state::reset)
         .def("sample", &state::sample)
         .def("step", &state::step)
