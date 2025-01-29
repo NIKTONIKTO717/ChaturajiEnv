@@ -43,6 +43,11 @@ constexpr uint BLUE = 1;
 struct position {
     uint x;
     uint y;
+
+    friend std::ostream& operator<<(std::ostream& os, const position& pos) {
+        os << "(" << pos.x << ", " << pos.y << ")";
+        return os;
+    }
 };
 
 bool isValid(position& p) {
@@ -90,14 +95,17 @@ struct move {
     position to;
     uint reward = 0;
 
-    //define operator==
     bool operator==(const move& m) const {
         return std::tie(from.x, from.y, to.x, to.y) == std::tie(m.from.x, m.from.y, m.to.x, m.to.y);
     }
 
-    //define operator<
     bool operator<(const move& m) const {
         return std::tie(from.x, from.y, to.x, to.y) < std::tie(m.from.x, m.from.y, m.to.x, m.to.y);
+    }
+
+    friend std::ostream& operator<<(std::ostream& os, const move& m) {
+        os << m.from << " -> " << m.to << " with reward: " << m.reward;
+        return os;
     }
 
     //default constructor
@@ -799,6 +807,7 @@ void state::printBoard() {
         }
         std::cout << "\n";
     }
+    std::cout << "printed board" << std::endl;
 };
 
 std::string getColor(uint color) {
@@ -931,6 +940,7 @@ struct MCTSNode {
                 state state_copy = current_state;
                 state_copy.step(move);
                 children[move] = std::make_shared<MCTSNode>(state_copy, this);
+                //std::cout << "Setting: " << move << ", Value: " << children[move] << "\n";
                 children[move]->is_terminal = state_copy.finished;
                 if (state_copy.finished) {
                     children[move]->is_terminal = true;
@@ -977,14 +987,28 @@ struct game {
 
     // Generate input for the neural network (last n states)
     py::array_t<float> get_evaluate_sample(int T, int skip) {
-        std::vector<state> last_states(states); //starts with already "played" states
-        auto node_ptr = root.get();
-        for (auto it = trajectory.begin(); it != trajectory.end(); ++it) { // add MCTS states
-            node_ptr = node_ptr->children[*it].get();
-            last_states.push_back(node_ptr->current_state);
+        try {
+            std::vector<state> last_states(states); //starts with already "played" states
+            //std::cout << "last_states size: " << last_states.size() << std::endl;
+            auto node_ptr = root.get();
+            //std::cout << "node_ptr: " << node_ptr << std::endl;
+            //std::cout << "trajectory size: " << trajectory.size() << std::endl;
+            for (auto it = trajectory.begin(); it != trajectory.end(); ++it) { // add MCTS states
+                auto it_find = node_ptr->children.find(*it);
+                if (it_find != node_ptr->children.end())
+                    node_ptr = it_find->second.get();
+                else
+                    break;
+                last_states.push_back(node_ptr->current_state);
+                //std::cout << "last_states size: " << last_states.size() << std::endl;
+            }
+            //std::cout << "final last_states size: " << last_states.size() << std::endl;
+            return states_to_numpy(last_states, T, skip);
         }
-
-        return states_to_numpy(last_states, T, skip);
+        catch (const std::exception& e) {
+            std::cerr << "C++ Exception: " << e.what() << std::endl;
+            throw py::value_error(e.what());  // Convert C++ exception to Python exception
+        }
     }
 
     move find_move_for_node(const std::map<move, std::shared_ptr<MCTSNode>>& children, MCTSNode* node) {
@@ -1000,76 +1024,119 @@ struct game {
 
     //P is expected to be already with applied mask and with sum = 1
     void give_evaluated_sample(py::array_t<float>& P, py::array_t<float>& V) {
-        /*current_search_position is already leaf node, not expanded*/
+        try {
+            /*current_search_position is already leaf node, not expanded*/
 
-        py::buffer_info P_buf = P.request();
-        py::buffer_info V_buf = V.request();
+            py::buffer_info P_buf = P.request();
+            py::buffer_info V_buf = V.request();
 
-        if (P_buf.size != 4096) {
-            throw std::runtime_error("Policy head output must have 4096 elements");
-        }
-        if (V_buf.size != 4) {
-            throw std::runtime_error("Value head output must have 4 elements");
-        }
-
-        float* P_ptr = static_cast<float*>(P_buf.ptr);
-        float* V_ptr = static_cast<float*>(V_buf.ptr);
-
-        auto* node = current_search_position.get();
-        node->value = std::make_tuple(V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3]);
-        node->expand(P_ptr);
-        node->is_leaf = false;
-
-        int leaf_turn = node->current_state.turn;
-
-        for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
-            node = node->parent;
-            int current_turn = node->current_state.turn; 
-            // get<n> = V_ptr[4+n-turn_current+turn_leaf % 4]
-            std::get<0>(node->W[*it]) = V_ptr[(4 - current_turn + leaf_turn) % 4];
-            std::get<1>(node->W[*it]) = V_ptr[(5 - current_turn + leaf_turn) % 4];
-            std::get<2>(node->W[*it]) = V_ptr[(6 - current_turn + leaf_turn) % 4];
-            std::get<3>(node->W[*it]) = V_ptr[(7 - current_turn + leaf_turn) % 4];
-            node->N[*it]++;
-            node->N_total++;
-        }
-
-        /*Start again from root and do while not reached leaf node...*/
-        trajectory.clear();
-        current_search_position = root;
-
-        while (!current_search_position->is_leaf) {
-            auto next_move = current_search_position->select_best_action();
-            trajectory.push_back(next_move);
-            current_search_position = current_search_position->children[next_move];
-            if (current_search_position->is_terminal) { //if terminal we can determine value without evaluating by nn
-                std::cout << "Found terminal state" << std::endl;
-                current_search_position->value = current_search_position->current_state.getFinalReward();
-
-                float values[4] = { //for simpler manipulation, tuple requires <n> on compile time...
-                    std::get<0>(current_search_position->value),
-                    std::get<1>(current_search_position->value),
-                    std::get<2>(current_search_position->value),
-                    std::get<3>(current_search_position->value)
-                };
-
-                for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
-                    node = node->parent;
-                    int current_turn = node->current_state.turn;
-                    // get<n> = V_ptr[4+n-turn_current+turn_leaf % 4]
-                    std::get<0>(node->W[*it]) = values[(4 - current_turn + leaf_turn) % 4];
-                    std::get<1>(node->W[*it]) = values[(5 - current_turn + leaf_turn) % 4];
-                    std::get<2>(node->W[*it]) = values[(6 - current_turn + leaf_turn) % 4];
-                    std::get<3>(node->W[*it]) = values[(7 - current_turn + leaf_turn) % 4];
-                    node->N[*it]++;
-                    node->N_total++;
-                }
-
-                trajectory.clear();
-                current_search_position = root;
+            if (P_buf.size != 4096) {
+                throw std::runtime_error("Policy head output must have 4096 elements");
             }
+            if (V_buf.size != 4) {
+                throw std::runtime_error("Value head output must have 4 elements");
+            }
+
+            float* P_ptr = static_cast<float*>(P_buf.ptr);
+            float* V_ptr = static_cast<float*>(V_buf.ptr);
+
+            auto* node = current_search_position.get();
+            node->value = std::make_tuple(V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3]);
+            node->expand(P_ptr);
+            node->is_leaf = false;
+
+            int leaf_turn = node->current_state.turn;
+
+            /*std::cout << "trajectory size: " << trajectory.size() << std::endl;
+            std::cout << "root: " << root << std::endl;
+            std::cout << "node: " << node << std::endl;*/
+
+            /*auto node_pr = root.get();
+            for (auto it = trajectory.begin(); it != trajectory.end(); ++it) { // iterate through trajectory from end to the root
+                std::cout << "node_pr: " << node_pr << std::endl;
+                std::cout << "is node_pr leaf: " << node_pr->is_leaf << std::endl;
+                std::cout << "node_pr childer size: " << node_pr->children.size() << std::endl;
+                for (const auto& pair : node_pr->children) {
+                    std::cout << "Key: " << pair.first << ", Value: " << pair.second << "\n";
+                }
+                std::cout << "*it: " << *it << std::endl;
+                std::cout << "node_pr children: " << node_pr->children[*it].get() << std::endl;
+                node_pr = node_pr->children[*it].get();
+            }*/
+
+            for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
+                /*std::cout << "node: " << node << std::endl;
+                std::cout << "parent node: " << node->parent << std::endl;
+                std::cout << "*it: " << *it << std::endl;
+                std::cout << "node W size: " << node->W.size() << std::endl;*/
+                node = node->parent;
+                if (!node) break;
+                int current_turn = node->current_state.turn; 
+                /*if (node->W.find(*it) != node->W.end()) {
+                    std::cout << "W found: " << std::get<0>(node->W[*it]) << std::endl;
+                }
+                else {
+                    std::cout << "W not wound." << std::endl;
+                }*/
+                // get<n> = V_ptr[4+n-turn_current+turn_leaf % 4]
+                std::get<0>(node->W[*it]) += V_ptr[(4 - current_turn + leaf_turn) % 4];
+                std::get<1>(node->W[*it]) += V_ptr[(5 - current_turn + leaf_turn) % 4];
+                std::get<2>(node->W[*it]) += V_ptr[(6 - current_turn + leaf_turn) % 4];
+                std::get<3>(node->W[*it]) += V_ptr[(7 - current_turn + leaf_turn) % 4];
+                node->N[*it]++;
+                node->N_total++;
+            }
+
+            /*Start again from root and do while not reached leaf node...*/
+            trajectory.clear();
+            /*std::cout << "root: " << root << std::endl;
+            std::cout << "current_search_position: " << current_search_position << std::endl;*/
+            current_search_position = root;
+
+            /*std::cout << "root: " << root << std::endl;
+            std::cout << "give_evaluated_sample: back propagated"<< std::endl;*/
+
+            while (!current_search_position->is_leaf) {
+                auto next_move = current_search_position->select_best_action();
+                trajectory.push_back(next_move);
+                //std::cout << "Trajectory push: " << next_move << ", Value: " << current_search_position->children[next_move] << "\n";
+                current_search_position = current_search_position->children[next_move];
+                if (current_search_position->is_terminal) { //if terminal we can determine value without evaluating by nn
+                    //std::cout << "Found terminal state" << std::endl;
+                    current_search_position->value = current_search_position->current_state.getFinalReward();
+
+                    float values[4] = { //for simpler manipulation, tuple requires <n> on compile time...
+                        std::get<0>(current_search_position->value),
+                        std::get<1>(current_search_position->value),
+                        std::get<2>(current_search_position->value),
+                        std::get<3>(current_search_position->value)
+                    };
+                    
+                    node = current_search_position.get();
+
+                    for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
+                        node = node->parent;
+                        if (!node) break;
+                        int current_turn = node->current_state.turn;
+                        // get<n> = V_ptr[4+n-turn_current+turn_leaf % 4]
+                        std::get<0>(node->W[*it]) = values[(4 - current_turn + leaf_turn) % 4];
+                        std::get<1>(node->W[*it]) = values[(5 - current_turn + leaf_turn) % 4];
+                        std::get<2>(node->W[*it]) = values[(6 - current_turn + leaf_turn) % 4];
+                        std::get<3>(node->W[*it]) = values[(7 - current_turn + leaf_turn) % 4];
+                        node->N[*it]++;
+                        node->N_total++;
+                    }
+
+                    trajectory.clear();
+                    current_search_position = root;
+                }
+            }
+            /*We are here at leaf node*/
         }
-        /*We are here at leaf node*/
+        catch (const std::exception& e) {
+            std::cerr << "C++ Exception: " << e.what() << std::endl;
+            throw py::value_error(e.what());  // Convert C++ exception to Python exception
+        }
     }
 
     // Perform a deterministic step by choosing the action with the highest N
@@ -1088,8 +1155,10 @@ struct game {
         }
         root = root->children[best_a]; // Reuse the child node as the new root
         states.push_back(root->current_state);
+        trajectory.clear();
+        current_search_position = root;
 
-        // Clear other branches to free memory
+        // TODO: Clear other branches to free memory
         root->parent = nullptr;
         return root->is_terminal;
     }
