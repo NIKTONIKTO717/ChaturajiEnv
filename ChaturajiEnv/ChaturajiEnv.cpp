@@ -277,6 +277,7 @@ struct state {
     std::array<player, 4> players;
     uint turn;
     bool finished = false;
+    uint no_progress_count = 0;
 
     //define default constructor
     state() {
@@ -287,11 +288,12 @@ struct state {
     }
 
     //copy constructor
-    state(const state& other) : players(other.players), turn(other.turn), finished(other.finished) {}
+    state(const state& other) : players(other.players), turn(other.turn), finished(other.finished), no_progress_count(other.no_progress_count) {}
 
     void nextTurn() {
         for (uint i = 0; i < 3; i++) { 
             turn = (turn + 1) % 4;
+            no_progress_count++;
             for (auto& player : players) {
                 player._pawn = player._pawn.rotate_to_local(1);
                 player._rook = player._rook.rotate_to_local(1);
@@ -299,6 +301,10 @@ struct state {
                 player._bishop = player._bishop.rotate_to_local(1);
                 player._king = player._king.rotate_to_local(1);
                 player._attacking = player._attacking.rotate_to_local(1);
+            }
+            if (no_progress_count >= 50) {
+                finished = true;
+                return;
             }
             if (players[turn].active) {
                 return;
@@ -731,7 +737,7 @@ std::vector<move> state::getLegalMoves() {
 
 // Function to generate a mask of valid moves
 py::array_t<float> state::getLegalMoveMask() {
-    std::vector<float> mask(4097, 0.0f); // 64*64 + 1 (pass)
+    std::vector<float> mask(4096, 0.0f); // 64*64
     std::vector<move> legal_moves = getLegalMoves();
 
     // Set mask values for legal moves
@@ -739,16 +745,9 @@ py::array_t<float> state::getLegalMoveMask() {
             mask[move.getIndex()] = 1.0f;
     }
 
-    if (players[turn].active) {
-        mask[4096] = 0.0f;
-    }
-    else {
-        mask[4096] = 1.0f;
-    }
-
     // Return mask as a NumPy array
     return py::array_t<float>(
-        { 4097 },           // Shape: (4096,)
+        { 4096 },           // Shape: (4096,)
         { sizeof(float) },  // Stride: sizeof(float)
         mask.data()         // Pointer to data
         );
@@ -914,6 +913,8 @@ struct MCTSNode {
         move best_action;
         double best_score = -std::numeric_limits<double>::infinity();
 
+        //std::cout << "N\t\tW[0]\t\tP\t\tScore\t\tMove" << std::endl;
+
         for (auto it = N.begin(); it != N.end(); ++it) {
             auto a = it->first;  // action
             auto n = it->second; // number of visits
@@ -921,13 +922,17 @@ struct MCTSNode {
             //double q = std::get<0>(W.at(a)) / (n + 1e-6);  // Q-value (mean value of next state)
             //double u = c_puct * action_probabilities.at(a) * sqrt(N_total) / (n + 1e-6);
             //double score = q + u;
-            double score = (std::get<0>(W.at(a)) + c_puct * P.at(a) * sqrt(N_total)) / (n + 1e-6);
+            double score = std::get<0>(W.at(a)) / (n + 1e-6) + (c_puct * P.at(a) * sqrt(N_total)) / (n + 1 + 1e-6);
+            //if(std::get<0>(W.at(a)) > 0)
+            //std::cout << n << "\t\t" << std::get<0>(W.at(a)) << "\t\t" << P.at(a) << "\t\t" << score << "\t\t" << a << std::endl;
 
             if (score > best_score) {
                 best_score = score;
                 best_action = a;
             }
         }
+
+        //std::cout << "Choosen move: " << best_action << std::endl;
 
         return best_action;
     }
@@ -1010,6 +1015,10 @@ struct game {
         }
     }
 
+    py::array_t<float> get_legal_moves_mask() {
+        return current_search_position->current_state.getLegalMoveMask();
+    }
+
     move find_move_for_node(const std::map<move, std::shared_ptr<MCTSNode>>& children, MCTSNode* node) {
         // Iterate through the map and compare node pointers
         for (const auto& entry : children) {
@@ -1021,9 +1030,10 @@ struct game {
         throw std::runtime_error("Node not found in the map");
     }
 
-    //P is expected to be already with applied mask and with sum = 1
-    void give_evaluated_sample(py::array_t<float>& P, py::array_t<float>& V) {
+    // returns new budget (number of left rollouts)
+    int give_evaluated_sample(py::array_t<float>& P, py::array_t<float>& V, int budget) {
         try {
+            if (budget <= 0) return budget;
             /*current_search_position is already leaf node, not expanded*/
 
             py::buffer_info P_buf = P.request();
@@ -1077,17 +1087,18 @@ struct game {
                 else {
                     std::cout << "W not wound." << std::endl;
                 }*/
-                // get<n> = V_ptr[4+n-turn_current+turn_leaf % 4]
-                std::get<0>(node->W[*it]) += V_ptr[(4 - current_turn + leaf_turn) % 4];
-                std::get<1>(node->W[*it]) += V_ptr[(5 - current_turn + leaf_turn) % 4];
-                std::get<2>(node->W[*it]) += V_ptr[(6 - current_turn + leaf_turn) % 4];
-                std::get<3>(node->W[*it]) += V_ptr[(7 - current_turn + leaf_turn) % 4];
+                // get<n> = V_ptr[4+n+turn_current-turn_leaf % 4]
+                std::get<0>(node->W[*it]) += V_ptr[(4 + current_turn - leaf_turn) % 4];
+                std::get<1>(node->W[*it]) += V_ptr[(5 + current_turn - leaf_turn) % 4];
+                std::get<2>(node->W[*it]) += V_ptr[(6 + current_turn - leaf_turn) % 4];
+                std::get<3>(node->W[*it]) += V_ptr[(7 + current_turn - leaf_turn) % 4];
                 node->N[*it]++;
                 node->N_total++;
             }
 
             /*Start again from root and do while not reached leaf node...*/
             trajectory.clear();
+            budget--;
             /*std::cout << "root: " << root << std::endl;
             std::cout << "current_search_position: " << current_search_position << std::endl;*/
             current_search_position = root;
@@ -1095,7 +1106,7 @@ struct game {
             /*std::cout << "root: " << root << std::endl;
             std::cout << "give_evaluated_sample: back propagated"<< std::endl;*/
 
-            while (!current_search_position->is_leaf) {
+            while (!current_search_position->is_leaf && budget >= 0) {
                 auto next_move = current_search_position->select_best_action();
                 trajectory.push_back(next_move);
                 //std::cout << "Trajectory push: " << next_move << ", Value: " << current_search_position->children[next_move] << "\n";
@@ -1112,25 +1123,28 @@ struct game {
                     };
                     
                     node = current_search_position.get();
+                    leaf_turn = node->current_state.turn;
 
                     for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
                         node = node->parent;
                         if (!node) break;
                         int current_turn = node->current_state.turn;
-                        // get<n> = V_ptr[4+n-turn_current+turn_leaf % 4]
-                        std::get<0>(node->W[*it]) = values[(4 - current_turn + leaf_turn) % 4];
-                        std::get<1>(node->W[*it]) = values[(5 - current_turn + leaf_turn) % 4];
-                        std::get<2>(node->W[*it]) = values[(6 - current_turn + leaf_turn) % 4];
-                        std::get<3>(node->W[*it]) = values[(7 - current_turn + leaf_turn) % 4];
+                        // get<n> = V_ptr[4+n+turn_current-turn_leaf % 4]
+                        std::get<0>(node->W[*it]) += values[(4 + current_turn - leaf_turn) % 4];
+                        std::get<1>(node->W[*it]) += values[(5 + current_turn - leaf_turn) % 4];
+                        std::get<2>(node->W[*it]) += values[(6 + current_turn - leaf_turn) % 4];
+                        std::get<3>(node->W[*it]) += values[(7 + current_turn - leaf_turn) % 4];
                         node->N[*it]++;
                         node->N_total++;
                     }
 
                     trajectory.clear();
+                    budget--;
                     current_search_position = root;
                 }
             }
             /*We are here at leaf node*/
+            return budget;
         }
         catch (const std::exception& e) {
             std::cerr << "C++ Exception: " << e.what() << std::endl;
@@ -1251,6 +1265,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("add_state", &game::add_state)
         .def("get_evaluate_sample", &game::get_evaluate_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("give_evaluated_sample", &game::give_evaluated_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("get_legal_moves_mask", &game::get_legal_moves_mask)
         .def("step_deterministic", &game::step_deterministic)
         .def("step_random", &game::step_random)
         .def("to_numpy", &game::to_numpy);
