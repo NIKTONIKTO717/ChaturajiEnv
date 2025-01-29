@@ -807,7 +807,6 @@ void state::printBoard() {
         }
         std::cout << "\n";
     }
-    std::cout << "printed board" << std::endl;
 };
 
 std::string getColor(uint color) {
@@ -1168,6 +1167,29 @@ struct game {
         // TODO: Implement stochastic sampling based on N^(1/temp)
         return false;
     }
+
+    // Perform a random step
+    bool step_random() {
+        if (root->is_terminal) //if terminal, do nothing
+            return true;
+
+        int rand_pos = rand() % root->N.size();
+
+        for (auto it = root->N.begin(); it != root->N.end(); ++it) {
+            if (rand_pos == 0) {
+                root = root->children[it->first];
+                break;
+            }
+            rand_pos--;
+        }
+        states.push_back(root->current_state);
+        trajectory.clear();
+        current_search_position = root;
+
+        // TODO: Clear other branches to free memory
+        root->parent = nullptr;
+        return root->is_terminal;
+    }
     
     // Gives last T states of the game, skip given number of last states
     py::array_t<float> to_numpy(int T, int skip = 0) const {
@@ -1230,6 +1252,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("get_evaluate_sample", &game::get_evaluate_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("give_evaluated_sample", &game::give_evaluated_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_deterministic", &game::step_deterministic)
+        .def("step_random", &game::step_random)
         .def("to_numpy", &game::to_numpy);
     py::class_<position>(m, "position")
         .def(pybind11::init<uint, uint>())
