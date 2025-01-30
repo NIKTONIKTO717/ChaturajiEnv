@@ -1,9 +1,10 @@
 #include <cstdint>
+#include <cmath>
 #include <iostream>
 #include <bitset>
 #include <cassert>
 #include <vector>
-#include <tuple>
+//#include <tuple>
 #include <array>
 #include <map>
 #include <memory>
@@ -33,6 +34,20 @@
 
 namespace py = pybind11;
 using uint = unsigned int;
+
+std::mt19937& global_rng() {
+    static thread_local std::mt19937 gen(std::random_device{}());
+    return gen;
+}
+
+template <typename T>
+std::vector<T> get_last_t_with_skip(const std::vector<T>& vec, size_t t, size_t n_skip) {
+    size_t start = std::max(0, static_cast<int>(vec.size()) - static_cast<int>(t + n_skip));
+    size_t end = std::max(0, static_cast<int>(vec.size()) - static_cast<int>(n_skip));
+
+    std::vector<T> result(vec.begin() + start, vec.begin() + end);
+    return result;
+}
 
 // Named constants for colors
 constexpr uint RED = 0;
@@ -108,7 +123,7 @@ struct move {
         return os;
     }
 
-    //default constructor
+    //default constructor //TODO: remove?
     move() = default;
 
     //define constructor
@@ -378,12 +393,14 @@ struct state {
         return { *this, m.reward, finished, false, info };
     }
 
-    std::tuple<uint, uint, uint, uint> getScore() const {
+    
+    std::array<uint, 4> get_score() const {
         return { players[turn % 4].score, players[(turn + 1) % 4].score, players[(turn + 2) % 4].score, players[(turn + 3) % 4].score };
     }
+    
 
     //returns reward at the end of the game
-    std::tuple<float, float, float, float> getFinalReward() const {
+    std::array<float, 4> getFinalReward() const {
         // (+1 for 1st player, +0.33 for 2nd, -0.33 for 3rd and -1 for 4th)
         std::vector<float> rank_rewards = { 1.0f, 0.33f, -0.33f, -1.0f };
 
@@ -412,10 +429,12 @@ struct state {
         return { rewards[0], rewards[1], rewards[2], rewards[3] };
     }
 
+    
     //returns score indexed from 1st player (red)
-    std::tuple<uint, uint, uint, uint> getScoreDefault() const {
+    std::array<uint, 4> get_score_default() const {
         return { players[0].score, players[1].score, players[2].score, players[3].score };
     }
+    
 
     // Convert the state into a flat vector of floats for NumPy
     py::array_t<float> to_numpy() const {
@@ -893,7 +912,7 @@ py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int 
 
 // Struct to represent MCTS nodes
 struct MCTSNode {
-    std::map<move, std::tuple<float, float, float, float>> W;  // Total value of each action
+    std::map<move, std::array<float, 4>> W;  // Total value of each action
     std::map<move, int> N;    // Visit count of each action
     std::map<move, float> P;    // probability of taking each action
     std::map<move, std::shared_ptr<MCTSNode>> children; // Child nodes for each action
@@ -901,7 +920,7 @@ struct MCTSNode {
     state current_state;        // Game state at this node
     bool is_terminal = false;   // Whether this is a terminal node
     bool is_leaf = true;   // Whether this is a leaf node
-    std::tuple<float, float, float, float> value{ 0.0f, 0.0f, 0.0f, 0.0f };         // Value of this node (only used for backpropagation)
+    std::array<float, 4> value{ 0.0f, 0.0f, 0.0f, 0.0f };         // Value of this node (only used for backpropagation)
     std::map<move, float> action_probabilities; // Policy network output: P(s, a) for each action.
     int N_total = 0;
 
@@ -962,11 +981,13 @@ struct MCTSNode {
 // Struct to represent the game with a vector of states
 struct game {
     std::vector<state> states;
-    std::vector<py::array_t<float>> probabilties; //policies used when selecting game move
+    std::vector<move> game_trajectory;
+    std::vector<std::array<float, 4096>> probabilities;
     std::shared_ptr<MCTSNode> root; // Root of the MCTS tree
     std::shared_ptr<MCTSNode> current_search_position; // current position, which will be used when called get_evaluate_sample()
-    uint n_of_finished = 0; //number of finished games
-    std::deque<move> trajectory;
+    bool finished = false;
+    std::array<float, 4> final_reward = { 0.0f, 0.0f, 0.0f, 0.0f };
+    std::deque<move> mcts_trajectory;
 
     int size() {
         return (int) states.size();
@@ -997,7 +1018,7 @@ struct game {
             auto node_ptr = root.get();
             //std::cout << "node_ptr: " << node_ptr << std::endl;
             //std::cout << "trajectory size: " << trajectory.size() << std::endl;
-            for (auto it = trajectory.begin(); it != trajectory.end(); ++it) { // add MCTS states
+            for (auto it = mcts_trajectory.begin(); it != mcts_trajectory.end(); ++it) { // add MCTS states
                 auto it_find = node_ptr->children.find(*it);
                 if (it_find != node_ptr->children.end())
                     node_ptr = it_find->second.get();
@@ -1050,7 +1071,7 @@ struct game {
             float* V_ptr = static_cast<float*>(V_buf.ptr);
 
             auto* node = current_search_position.get();
-            node->value = std::make_tuple(V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3]);
+            node->value = { V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3] };
             node->expand(P_ptr);
             node->is_leaf = false;
 
@@ -1073,7 +1094,7 @@ struct game {
                 node_pr = node_pr->children[*it].get();
             }*/
 
-            for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
+            for (auto it = mcts_trajectory.rbegin(); it != mcts_trajectory.rend(); ++it) { // iterate through trajectory from end to the root
                 /*std::cout << "node: " << node << std::endl;
                 std::cout << "parent node: " << node->parent << std::endl;
                 std::cout << "*it: " << *it << std::endl;
@@ -1088,16 +1109,16 @@ struct game {
                     std::cout << "W not wound." << std::endl;
                 }*/
                 // get<n> = V_ptr[4+n+turn_current-turn_leaf % 4]
-                std::get<0>(node->W[*it]) += V_ptr[(4 + current_turn - leaf_turn) % 4];
-                std::get<1>(node->W[*it]) += V_ptr[(5 + current_turn - leaf_turn) % 4];
-                std::get<2>(node->W[*it]) += V_ptr[(6 + current_turn - leaf_turn) % 4];
-                std::get<3>(node->W[*it]) += V_ptr[(7 + current_turn - leaf_turn) % 4];
+                node->W[*it][0] += V_ptr[(4 + current_turn - leaf_turn) % 4];
+                node->W[*it][1] += V_ptr[(5 + current_turn - leaf_turn) % 4];
+                node->W[*it][2] += V_ptr[(6 + current_turn - leaf_turn) % 4];
+                node->W[*it][3] += V_ptr[(7 + current_turn - leaf_turn) % 4];
                 node->N[*it]++;
                 node->N_total++;
             }
 
             /*Start again from root and do while not reached leaf node...*/
-            trajectory.clear();
+            mcts_trajectory.clear();
             budget--;
             /*std::cout << "root: " << root << std::endl;
             std::cout << "current_search_position: " << current_search_position << std::endl;*/
@@ -1108,37 +1129,31 @@ struct game {
 
             while (!current_search_position->is_leaf && budget >= 0) {
                 auto next_move = current_search_position->select_best_action();
-                trajectory.push_back(next_move);
+                mcts_trajectory.push_back(next_move);
                 //std::cout << "Trajectory push: " << next_move << ", Value: " << current_search_position->children[next_move] << "\n";
                 current_search_position = current_search_position->children[next_move];
                 if (current_search_position->is_terminal) { //if terminal we can determine value without evaluating by nn
                     //std::cout << "Found terminal state" << std::endl;
                     current_search_position->value = current_search_position->current_state.getFinalReward();
-
-                    float values[4] = { //for simpler manipulation, tuple requires <n> on compile time...
-                        std::get<0>(current_search_position->value),
-                        std::get<1>(current_search_position->value),
-                        std::get<2>(current_search_position->value),
-                        std::get<3>(current_search_position->value)
-                    };
+                    auto& values = current_search_position->value;
                     
                     node = current_search_position.get();
                     leaf_turn = node->current_state.turn;
 
-                    for (auto it = trajectory.rbegin(); it != trajectory.rend(); ++it) { // iterate through trajectory from end to the root
+                    for (auto it = mcts_trajectory.rbegin(); it != mcts_trajectory.rend(); ++it) { // iterate through trajectory from end to the root
                         node = node->parent;
                         if (!node) break;
                         int current_turn = node->current_state.turn;
                         // get<n> = V_ptr[4+n+turn_current-turn_leaf % 4]
-                        std::get<0>(node->W[*it]) += values[(4 + current_turn - leaf_turn) % 4];
-                        std::get<1>(node->W[*it]) += values[(5 + current_turn - leaf_turn) % 4];
-                        std::get<2>(node->W[*it]) += values[(6 + current_turn - leaf_turn) % 4];
-                        std::get<3>(node->W[*it]) += values[(7 + current_turn - leaf_turn) % 4];
+                        node->W[*it][0] += values[(4 + current_turn - leaf_turn) % 4];
+                        node->W[*it][1] += values[(5 + current_turn - leaf_turn) % 4];
+                        node->W[*it][2] += values[(6 + current_turn - leaf_turn) % 4];
+                        node->W[*it][3] += values[(7 + current_turn - leaf_turn) % 4];
                         node->N[*it]++;
                         node->N_total++;
                     }
 
-                    trajectory.clear();
+                    mcts_trajectory.clear();
                     budget--;
                     current_search_position = root;
                 }
@@ -1152,62 +1167,102 @@ struct game {
         }
     }
 
+    bool make_step(std::array<float, 4096> policy) {
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+
+        double cumulative_sum = 0.0;
+        double target = dist(global_rng());
+        move action;
+
+        for (auto it = root->N.begin(); it != root->N.end(); ++it) {
+            cumulative_sum += policy[it->first.getIndex()];
+            if (cumulative_sum >= target) {
+                action = it->first;
+                root = root->children[it->first];
+                break;
+            }
+        }
+
+        states.push_back(root->current_state);
+        game_trajectory.push_back(action);
+        probabilities.push_back(std::move(policy));
+        mcts_trajectory.clear();
+        current_search_position = root;
+
+        root->parent = nullptr;
+        if (root->is_terminal) {
+            auto& values = root->value;
+            auto turn = root->current_state.turn;
+            //current_turn = 0 - game starts with turn == 0
+            finished = true;
+            final_reward = { values[(4 - turn) % 4] , values[(5 - turn) % 4] , values[(6 - turn) % 4] , values[(7 - turn) % 4] };
+            return true;
+        }
+        return false;
+    }
+
     // Perform a deterministic step by choosing the action with the highest N
     bool step_deterministic() {
         if (root->is_terminal) //if terminal, do nothing
             return true;
-        int best_n = -std::numeric_limits<int>::infinity();
+
         move best_a;
+        int best_n = -std::numeric_limits<int>::infinity();
+
         for (auto it = root->N.begin(); it != root->N.end(); ++it) {
-            auto a = it->first; // move
-            auto n = it->second; // number of visits
-            if (n > best_n) {
-                best_n = n;
-                best_a = a;
+            if (it->second > best_n) {
+                best_a = it->first;
+                best_n = it->second;
             }
         }
-        root = root->children[best_a]; // Reuse the child node as the new root
-        states.push_back(root->current_state);
-        trajectory.clear();
-        current_search_position = root;
 
-        // TODO: Clear other branches to free memory
-        root->parent = nullptr;
-        return root->is_terminal;
+        std::array<float, 4096> policy = { 0.0f };
+        policy[best_a.getIndex()] = 1.0f;
+        return make_step(std::move(policy));
     }
 
     // Perform a stochastic step based on policy (pi ~ N^(1/temp))
-    bool step_stochastically(double temperature = 1.0) {
-        // TODO: Implement stochastic sampling based on N^(1/temp)
-        return false;
+    bool step_stochastic(double temperature = 1.0) {
+        if (root->is_terminal) //if terminal, do nothing
+            return true;
+
+        std::array<float, 4096> policy = { 0.0f };
+        float N_pow_total = 0.0f;
+
+        for (auto it = root->N.begin(); it != root->N.end(); ++it) {
+            policy[it->first.getIndex()] = (float) std::pow(it->second, temperature);
+            N_pow_total += policy[it->first.getIndex()];
+        }
+
+        for (auto it = root->N.begin(); it != root->N.end(); ++it) {
+            policy[it->first.getIndex()] /= N_pow_total;
+        }
+
+        return make_step(std::move(policy));
     }
 
     // Perform a random step
     bool step_random() {
-        if (root->is_terminal) //if terminal, do nothing
-            return true;
-
-        int rand_pos = rand() % root->N.size();
-
-        for (auto it = root->N.begin(); it != root->N.end(); ++it) {
-            if (rand_pos == 0) {
-                root = root->children[it->first];
-                break;
-            }
-            rand_pos--;
-        }
-        states.push_back(root->current_state);
-        trajectory.clear();
-        current_search_position = root;
-
-        // TODO: Clear other branches to free memory
-        root->parent = nullptr;
-        return root->is_terminal;
+        return step_stochastic(0.0f); 
     }
     
     // Gives last T states of the game, skip given number of last states
     py::array_t<float> to_numpy(int T, int skip = 0) const {
         return states_to_numpy(states, T, skip);
+    }
+
+    std::tuple<py::array_t<float>, std::array<float, 4096>, std::array<float, 4>> get_sample(int T, int skip = 0) {
+        auto index_last = states.size() - (skip + 2); //(+1) size is last_index+1, (+1) last state in sample is last state before terminated
+        auto& values = root->value;
+        auto turn = states[index_last].turn;
+        std::array<float, 4> value = { values[(4 - turn) % 4], values[(5 - turn) % 4], values[(6 - turn) % 4], values[(7 - turn) % 4] };
+
+        return { states_to_numpy(states, T, skip + 1), probabilities[index_last] , value }; //(+1) We don't want sample where last state is terminated
+    }
+
+    std::tuple<py::array_t<float>, std::array<float, 4096>, std::array<float, 4>> get_random_sample(int T) {
+        std::uniform_int_distribution<> dist(0, states.size() - 1);
+        return get_sample(T, dist(global_rng()));
     }
 };
 
@@ -1256,18 +1311,20 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("reset", &state::reset)
         .def("sample", &state::sample)
         .def("step", &state::step)
-        .def("getScore", &state::getScore)
-        .def("getScoreDefault", &state::getScoreDefault);
+        .def("get_score", &state::get_score)
+        .def("get_score_default", &state::get_score_default);
     py::class_<game>(m, "game")
         .def(pybind11::init<>())
         .def("size", &game::size)
         .def("get", &game::get)
+        .def_readonly("final_reward", &game::final_reward)
         .def("add_state", &game::add_state)
         .def("get_evaluate_sample", &game::get_evaluate_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("give_evaluated_sample", &game::give_evaluated_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("get_legal_moves_mask", &game::get_legal_moves_mask)
-        .def("step_deterministic", &game::step_deterministic)
-        .def("step_random", &game::step_random)
+        .def("step_deterministic", &game::step_deterministic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("step_stochastic", &game::step_stochastic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("step_random", &game::step_random, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("to_numpy", &game::to_numpy);
     py::class_<position>(m, "position")
         .def(pybind11::init<uint, uint>())

@@ -146,6 +146,8 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalDependencies>python311.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>C:\Users\jasom\AppData\Local\Programs\Python\Python311\libs;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <StackReserveSize>0x8000000</StackReserveSize>
+      <StackCommitSize>0x1000000</StackCommitSize>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
