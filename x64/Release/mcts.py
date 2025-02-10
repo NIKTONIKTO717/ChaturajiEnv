@@ -30,7 +30,7 @@ print(f'Number of parameters: {num_params} \n')
 def run_mcts_game(thread_id, model, game_storage):
     """Runs MCTS using the shared model."""
     while True:
-        use_model = game_storage.size > 10000 # first 10000 games are using vanilla MCTS
+        use_model = game_storage.size() > 10000 # first 10000 games are using vanilla MCTS
         game = chaturajienv.game()
         for j in range(10000):
             budget = 800 #800 in AlphaZero

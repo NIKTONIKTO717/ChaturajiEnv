@@ -29,7 +29,11 @@ print(f'Number of parameters: {num_params} \n')
 
 def run_mcts_game(thread_id, model, game_storage):
     """Runs MCTS using the shared model."""
-    while True:
+    while not stop_event.is_set():
+        if pause_event.is_set():
+            time.sleep(0.1)
+            continue
+
         use_model = game_storage.size > 10000 # first 10000 games are using vanilla MCTS
         game = chaturajienv.game()
         for j in range(10000):
@@ -67,6 +71,11 @@ def run_mcts_game(thread_id, model, game_storage):
 
 
 if __name__ == "__main__":
+
+    stop_event = threading.Event()  # Stop flag (for termination)
+    pause_event = threading.Event()  # Pause flag (for pausing)
+    pause_event.set()  # Start paused
+
     num_threads = 8
     threads = []
     for i in range(num_threads):
