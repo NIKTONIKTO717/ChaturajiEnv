@@ -5,6 +5,8 @@
 #include <cassert>
 #include <vector>
 //#include <tuple>
+#include <mutex>
+#include <deque>
 #include <array>
 #include <map>
 #include <memory>
@@ -902,7 +904,7 @@ py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int 
 
     // Return as a NumPy array
     return py::array_t<float>(
-        { 20 * T + 12, 8, 8 },     // Shape (5 chanels for each player + describing last state, 8, 8)
+        { 20 * T + 12, 8, 8 },     // Shape (5 channels for each player + describing last state, 8, 8)
         { 8 * 8 * sizeof(float),   // Stride for c
          8 * sizeof(float),        // Stride for w
          sizeof(float) },          // Stride for h
@@ -1251,18 +1253,70 @@ struct game {
         return states_to_numpy(states, T, skip);
     }
 
-    std::tuple<py::array_t<float>, std::array<float, 4096>, std::array<float, 4>> get_sample(int T, int skip = 0) {
+    std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_sample(int T, int skip = 0) {
         auto index_last = states.size() - (skip + 2); //(+1) size is last_index+1, (+1) last state in sample is last state before terminated
         auto& values = root->value;
         auto turn = states[index_last].turn;
         std::array<float, 4> value = { values[(4 - turn) % 4], values[(5 - turn) % 4], values[(6 - turn) % 4], values[(7 - turn) % 4] };
 
-        return { states_to_numpy(states, T, skip + 1), probabilities[index_last] , value }; //(+1) We don't want sample where last state is terminated
+        return { 
+            states_to_numpy(states, T, skip + 1),  //(+1) We don't want sample where last state is terminated
+            py::array_t<float>(4096, probabilities[index_last].data()),
+            py::array_t<float>(4, value.data())
+        };
     }
 
-    std::tuple<py::array_t<float>, std::array<float, 4096>, std::array<float, 4>> get_random_sample(int T) {
-        std::uniform_int_distribution<> dist(0, states.size() - 1);
+    // equivalent of: std::tuple<py::array_t<float>, std::array<float, 4096>, std::array<float, 4>>
+    std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample(int T) {
+        // (-1) for states.size() = x can be optained x - 1 samples
+        // (-1) for last terminated state
+        std::uniform_int_distribution<> dist(0, states.size() - 2);
         return get_sample(T, dist(global_rng()));
+    }
+};
+
+struct game_storage {
+    std::deque<game> games;
+    std::mutex mutex_;  // for synchronization
+    size_t max_size;
+
+    game_storage(size_t max_size = 100000) : max_size(max_size) {}
+
+    void add_game(game& g) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (games.size() >= max_size) {
+            games.pop_front();
+        }
+        games.push_back(std::move(g));
+    }
+
+    //shouldn't be used during training, game can be deleted before calling some other game function
+    game* get_game(int index) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (index >= 0) {
+            if (index >= games.size()) throw std::out_of_range("Index out of bounds");
+            return &games[index];
+        }
+        else {
+            if (- index > games.size()) throw std::out_of_range("Index out of bounds");
+            return &games[games.size() + index];
+        } 
+    }
+
+    //get random sample
+    std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample(int T = 8) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<int> game_sizes(games.size());
+        for (size_t i = 0; i < games.size(); i++) {
+            game_sizes[i] = games[i].size() - 2;
+        }
+        std::discrete_distribution<> dist(game_sizes.begin(), game_sizes.end());
+        return games[dist(global_rng())].get_random_sample(T);
+    }
+
+    size_t size() { 
+        std::lock_guard<std::mutex> lock(mutex_);
+        return games.size(); 
     }
 };
 
@@ -1325,7 +1379,15 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("step_deterministic", &game::step_deterministic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_stochastic", &game::step_stochastic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_random", &game::step_random, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
-        .def("to_numpy", &game::to_numpy);
+        .def("to_numpy", &game::to_numpy)
+        .def("get_sample", &game::get_sample)
+        .def("get_random_sample", &game::get_random_sample);
+    py::class_<game_storage>(m, "game_storage")
+        .def(py::init<size_t>(), py::arg("max_size") = 100000)
+        .def("add_game", &game_storage::add_game)
+        .def("get_game", &game_storage::get_game, py::return_value_policy::reference_internal)
+        .def("get_random_sample", &game_storage::get_random_sample)
+        .def("size", &game_storage::size);  //number of stored games
     py::class_<position>(m, "position")
         .def(pybind11::init<uint, uint>())
         .def_readwrite("x", &position::x)
