@@ -9,6 +9,7 @@
 #include <deque>
 #include <array>
 #include <map>
+#include <unordered_map>
 #include <memory>
 #include <cmath>
 #include <algorithm>
@@ -64,6 +65,14 @@ struct position {
     friend std::ostream& operator<<(std::ostream& os, const position& pos) {
         os << "(" << pos.x << ", " << pos.y << ")";
         return os;
+    }
+
+    bool operator==(const position& other) const {
+        return x == other.x && y == other.y;
+    }
+
+    std::size_t hash() const {
+        return std::hash<int>()(x) ^ (std::hash<int>()(y) << 1);
     }
 };
 
@@ -134,6 +143,14 @@ struct move {
     //returns index on flatten action_mask of size 64*64
     uint64_t getIndex() const {
         return ((from.y << 3) | from.x) << 6 | ((to.y << 3) | to.x);
+    }
+};
+
+struct move_hash {
+    std::size_t operator()(const move& m) const {
+        std::size_t h1 = m.from.hash();
+        std::size_t h2 = m.to.hash();
+        return m.from.hash() ^ (m.to.hash() << 1);
     }
 };
 
@@ -914,16 +931,15 @@ py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int 
 
 // Struct to represent MCTS nodes
 struct MCTSNode {
-    std::map<move, std::array<float, 4>> W;  // Total value of each action
-    std::map<move, int> N;    // Visit count of each action
-    std::map<move, float> P;    // probability of taking each action
-    std::map<move, std::shared_ptr<MCTSNode>> children; // Child nodes for each action
+    std::unordered_map<move, std::array<float, 4>, move_hash> W;  // Total value of each action
+    std::unordered_map<move, int, move_hash> N;    // Visit count of each action
+    std::unordered_map<move, float, move_hash> P;    // probability of taking each action
+    std::unordered_map<move, std::shared_ptr<MCTSNode>, move_hash> children; // Child nodes for each action
     MCTSNode* parent = nullptr; // Pointer to the parent node
     state current_state;        // Game state at this node
     bool is_terminal = false;   // Whether this is a terminal node
     bool is_leaf = true;   // Whether this is a leaf node
     std::array<float, 4> value{ 0.0f, 0.0f, 0.0f, 0.0f };         // Value of this node (only used for backpropagation)
-    std::map<move, float> action_probabilities; // Policy network output: P(s, a) for each action.
     int N_total = 0;
 
     MCTSNode(const state& s, MCTSNode* p = nullptr) : current_state(s), parent(p) {}
@@ -960,14 +976,20 @@ struct MCTSNode {
 
     // Expand a node by adding child nodes for all legal moves
     void expand(float* P_ptr) {
-        for (auto& move : current_state.getLegalMoves()) {
+        auto moves = current_state.getLegalMoves();
+        children.reserve(moves.size());
+        N.reserve(moves.size());
+        W.reserve(moves.size());
+        P.reserve(moves.size());
+        for (auto& move : moves) {
             if (children.find(move) == children.end()) {
                 state state_copy = current_state;
                 state_copy.step(move);
-                children[move] = std::make_shared<MCTSNode>(state_copy, this);
+                children[move] = std::make_shared<MCTSNode>(std::move(state_copy), this);
+                children[move] = std::make_shared<MCTSNode>(current_state, this);
+                children[move]->current_state.step(move);
                 //std::cout << "Setting: " << move << ", Value: " << children[move] << "\n";
-                children[move]->is_terminal = state_copy.finished;
-                if (state_copy.finished) {
+                if (children[move]->current_state.finished) {
                     children[move]->is_terminal = true;
                     children[move]->value = state_copy.getFinalReward();
                 }
@@ -1007,6 +1029,7 @@ struct game {
     }
 
     game() {
+        states.reserve(256);
         states.push_back(state());
         root = std::make_shared<MCTSNode>(state());
         current_search_position = root;
@@ -1016,6 +1039,7 @@ struct game {
     py::array_t<float> get_evaluate_sample(int T, int skip) {
         try {
             std::vector<state> last_states(states); //starts with already "played" states
+            last_states.reserve(states.size() + mcts_trajectory.size());
             //std::cout << "last_states size: " << last_states.size() << std::endl;
             auto node_ptr = root.get();
             //std::cout << "node_ptr: " << node_ptr << std::endl;
