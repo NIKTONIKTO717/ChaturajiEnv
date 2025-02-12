@@ -11,14 +11,20 @@ import multiprocessing
 import time
 import faulthandler
 from network import AlphaZeroNet
+import os
+import psutil
 faulthandler.enable()
 
 total_score = (0,0,0,0)
 
 game_storage = chaturajienv.game_storage(1000)
 
+p = psutil.Process(os.getpid())
+p.cpu_affinity([1])
+
 for g in range(20):
     game = chaturajienv.game()
+    start_time = time.time()
     for j in range(10000):
         budget = 800 #800 in AlphaZero
         while budget > 0:
@@ -45,6 +51,7 @@ for g in range(20):
                 print('Game ', g, ' finished after ', j+1, ' moves')
                 total_score = tuple(map(sum, zip(total_score, game.get(j+1).get_score_default())))
                 print(game.final_reward)
+                print("time per move:", (time.time() - start_time) / (j+1))
                 break
         else:
             
@@ -54,6 +61,7 @@ for g in range(20):
                 #print(game.get(j+1).getScoreDefault())
                 total_score = tuple(map(sum, zip(total_score, game.get(j+1).get_score_default())))
                 print(game.final_reward)
+                print("time per move:", (time.time() - start_time) / (j+1))
                 break
     print('total score:', total_score)
 
