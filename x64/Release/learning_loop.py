@@ -31,19 +31,20 @@ def main():
 
     #game_storage = chaturajienv.game_storage(1000)
 
-    mcts = MCTS(net_acting, device_acting, 4, 100)
+    mcts = MCTS(net_acting, device_acting, 100000, 8, 80)
 
     mcts.start()
 
-    while True:
-        #print(f"Game storage global size: {get_game_storage_size(game_storage)}")
+    while mcts.cache_size() < 100:
+        print(f"Game storage size: {mcts.cache_size()}")
         time.sleep(10)
 
-    while mcts.get_game_storage_size() < 10000:
-        print(f"Game storage size: {mcts.get_game_storage_size()}")
-        time.sleep(10)
-
-
+    print('cache size:', mcts.cache_size())
+    print('storage size:', mcts.size())
+    mcts.stop()
+    print('cache size:', mcts.cache_size())
+    print('storage size:', mcts.size())
+    mcts.start()
 
     # training loop
     for i in range(1000):

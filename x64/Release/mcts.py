@@ -7,6 +7,7 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+#import torch.multiprocessing as multiprocessing
 import multiprocessing
 import time
 import faulthandler
@@ -15,14 +16,18 @@ import os
 from network import AlphaZeroNet
 faulthandler.enable()
 
-game_storage_shared = chaturajienv.game_storage_shared()
-
-def run_mcts_game(process_id, net, stop_event, search_budget, game_storage):
+def run_mcts_game(process_id, net, stop_event, search_budget):
     """Runs MCTS using the shared model."""
-    
+    try:
+        p = psutil.Process(os.getpid())
+        p.cpu_affinity([process_id])  # Pin to specific CPU core
+    except Exception as e:
+        print(f"Failed to set CPU affinity for process {process_id}: {e}")
+
+    print(f"Process {process_id} started on core {process_id}")
     game_index = 0
     while not stop_event.is_set():
-        use_model = False # (game_storage.size() > 10000) # first 10000 games are using vanilla MCTS
+        use_model = True # (game_storage.size() > 10000) # first 10000 games are using vanilla MCTS
         game = chaturajienv.game()
         start_time = time.time()
         for j in range(10000):
@@ -40,10 +45,17 @@ def run_mcts_game(process_id, net, stop_event, search_budget, game_storage):
                     v = np.random.rand(4)
 
                 p_mask = game.get_legal_moves_mask()
+                if np.sum(p_mask) == 0:
+                    print(p_mask)
+                    #throw error exception
+                    raise Exception('ZERO MASK')
+                    
                 if budget == search_budget:
                     #add dirichlet noise same as AlphaZero
                     p = 0.75 * p + 0.25 * np.random.dirichlet([0.03] * 4096)
                 p = p * p_mask ## TODO: do this in C++
+                if np.sum(p) == 0:
+                    raise Exception('ZERO P')
                 p = p / np.sum(p)
                 #p = np.exp(p)/np.sum(np.exp(p))
                 #p = torch.nn.functional.softmax(p, dim=1)
@@ -51,16 +63,16 @@ def run_mcts_game(process_id, net, stop_event, search_budget, game_storage):
                 budget = game.give_evaluated_sample(p, v, budget)
 
             if(game.step_stochastic(1.0)):
-                print('Game', process_id, '-', game_index, 'finished after', j+1, 'moves')
+                print('Game', f'{process_id}-{game_index}', 'finished after', j+1, 'moves')
                 game_index += 1
                 print(game.final_reward)
                 print("time per move:", (time.time() - start_time) / (j+1))
                 break
-        game_storage.add_game(game)
-        print('Game storage size:', game_storage.size())
+        
+        game.save_game(f'cache_games/game_{process_id}_{game_index}.bin')
 
 class MCTS:
-    def __init__(self, net, device, num_processes = 8, budget = 800):
+    def __init__(self, net, device, storage_size = 100000, num_processes = 8, budget = 800):
         #network related
         self.net = net # The shared network
         self.net.share_memory()
@@ -72,24 +84,26 @@ class MCTS:
         self.num_processes = num_processes
         self.stop_event = multiprocessing.Event()
         self.processes = []
+        os.makedirs('cache_games', exist_ok=True)
 
         #mcts related
         self.budget = budget
+        self.game_storage = chaturajienv.game_storage(storage_size)
+
+    def process_cache(self):
+        for file in os.listdir('cache_games'):
+            self.game_storage.load_game(f'cache_games/{file}')
+            os.remove(f'cache_games/{file}')
 
     def start(self):
+        #make sure cache is clear
+        self.process_cache()
         self.processes = []
         self.stop_event.clear()
         for i in range(self.num_processes):
             p = multiprocessing.Process(
-                target=run_mcts_game, 
-                args=(
-                    i, 
-                    self.net, 
-                    # game_storage is thread safe. Is inside MCTS, contains mutex lock in C++
-                    self.stop_event, 
-                    self.budget,
-                    game_storage_shared
-                    )
+                    target=run_mcts_game, 
+                    args=(i, self.net, self.stop_event, self.budget)
                 )
             p.start()
             self.processes.append(p)
@@ -98,28 +112,31 @@ class MCTS:
         self.stop_event.set()
         for p in self.processes:
             p.join()
+        self.process_cache()
     
-def get_game_storage_size(game_storage):
-    #safe because mutex implementation in C++
-    return game_storage.size()
+    def size(self):
+        return self.game_storage.size()
+    
+    def cache_size(self):
+        return len(os.listdir('cache_games'))
 
-def get_batch(game_storage, batch_size):
-    if len(game_storage) == 0:
-        return None, None, None
-    #just to find out sample, policy, value shapes
-    (sample, policy, value) = game_storage.get_random_sample(8)
-    sample_shape = sample.shape
-    policy_shape = policy.shape
-    value_shape = value.shape
+    def get_batch(self, batch_size):
+        if self.game_storage.size() == 0:
+            return None, None, None
+        #just to find out sample, policy, value shapes
+        (sample, policy, value) = self.game_storage.get_random_sample(8)
+        sample_shape = sample.shape
+        policy_shape = policy.shape
+        value_shape = value.shape
 
-    samples = np.empty((batch_size, *sample_shape), dtype=np.float32)
-    policies = np.empty((batch_size, *policy_shape), dtype=np.float32)
-    values = np.empty((batch_size, *value_shape), dtype=np.float32)
+        samples = np.empty((batch_size, *sample_shape), dtype=np.float32)
+        policies = np.empty((batch_size, *policy_shape), dtype=np.float32)
+        values = np.empty((batch_size, *value_shape), dtype=np.float32)
 
-    for i in range(batch_size):
-        (sample, policy, value) = game_storage.get_random_sample(8)
-        samples[i] = sample
-        policies[i] = policy
-        values[i] = value
+        for i in range(batch_size):
+            (sample, policy, value) = self.game_storage.get_random_sample(8)
+            samples[i] = sample
+            policies[i] = policy
+            values[i] = value
 
-    return samples, policies, values
+        return samples, policies, values

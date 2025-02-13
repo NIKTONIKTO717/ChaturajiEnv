@@ -29,8 +29,6 @@
 
 #include <boost/archive/binary_oarchive.hpp>
 #include <boost/archive/binary_iarchive.hpp>
-#include <boost/archive/text_iarchive.hpp>
-#include <boost/archive/text_oarchive.hpp>
 #include <fstream>
 
 #ifdef _MSC_VER
@@ -979,11 +977,11 @@ py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int 
         );
 }
 
-struct game;
+/*struct game;
 struct MCTSNode;
 BOOST_CLASS_VERSION(game, 1)
 BOOST_CLASS_VERSION(MCTSNode, 1)
-BOOST_SERIALIZATION_SHARED_PTR(MCTSNode)
+BOOST_SERIALIZATION_SHARED_PTR(MCTSNode)*/
 
 // Struct to represent MCTS nodes
 struct MCTSNode {
@@ -1498,8 +1496,8 @@ int main() {
     s.printBoard();
     s.printLegalMoves();
 
-    g.save_game("file2.json");
-    game g_new("file2.json");
+    g.save_game("game.bin");
+    game g_new("game.bin");
     for (int i = 0; i < 100; i++) {
         std::cout << "Enter move (from_x from_y to_x to_y): ";
         move m;

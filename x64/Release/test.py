@@ -23,11 +23,11 @@ game_storage = chaturajienv.game_storage(1000)
 p = psutil.Process(os.getpid())
 p.cpu_affinity([1])
 
-for g in range(2):
+for g in range(3):
     game = chaturajienv.game()
     start_time = time.time()
     for j in range(10000):
-        budget = 800 #800 in AlphaZero
+        budget = 100 #800 in AlphaZero
         while budget > 0:
             sample = game.get_evaluate_sample(8, 0)
 
@@ -37,7 +37,7 @@ for g in range(2):
             #p = p.squeeze(0).cpu().numpy()
             #v = v.squeeze(0).cpu().numpy()
             p_mask = game.get_legal_moves_mask()
-            if budget == 800:
+            if budget == 100:
                 #add dirichlet noise
                 p = 0.75 * p + 0.25 * np.random.dirichlet([0.03] * 4096)
             p = p * p_mask
@@ -65,10 +65,11 @@ for g in range(2):
                 print("time per move:", (time.time() - start_time) / (j+1))
                 break
     print('total score:', total_score)
-
     game.save_game('game' + str(g) + '.json')
-    
     game_storage.load_game('game' + str(g) + '.json')
+
+print(game_storage.size())
+#game_storage.get_game(0).get(1).printBoard()
 
 (sample, policy, value) = game_storage.get_random_sample(8)
 batch_size = 1000
