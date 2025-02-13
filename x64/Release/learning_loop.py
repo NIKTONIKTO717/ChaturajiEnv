@@ -1,4 +1,3 @@
-import chaturajienv
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -30,12 +29,14 @@ def main():
     net_training = AlphaZeroNet((172,8,8), 4096, 4, 16, 16).to(device_training)
     optimizer = optim.Adam(net_training.parameters(), lr=LEARNING_RATE, weight_decay=L2_REG)
 
-    mcts = MCTS(net_acting, device_acting, 100000, 4, 800)
+    #game_storage = chaturajienv.game_storage(1000)
+
+    mcts = MCTS(net_acting, device_acting, 4, 100)
 
     mcts.start()
 
     while True:
-        print(f"Game storage size: {mcts.get_game_storage_size()}")
+        #print(f"Game storage global size: {get_game_storage_size(game_storage)}")
         time.sleep(10)
 
     while mcts.get_game_storage_size() < 10000:

@@ -20,6 +20,18 @@
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
 #include <pybind11/iostream.h>
+#include <boost/serialization/unordered_map.hpp>
+#include <boost/serialization/array.hpp>
+#include <boost/serialization/vector.hpp>
+#include <boost/serialization/shared_ptr.hpp>
+#include <boost/serialization/deque.hpp>
+#include <boost/serialization/version.hpp>
+
+#include <boost/archive/binary_oarchive.hpp>
+#include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/text_iarchive.hpp>
+#include <boost/archive/text_oarchive.hpp>
+#include <fstream>
 
 #ifdef _MSC_VER
 #  include <intrin.h>
@@ -73,6 +85,12 @@ struct position {
 
     std::size_t hash() const {
         return std::hash<int>()(x) ^ (std::hash<int>()(y) << 1);
+    }
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int version) {
+        ar& x;
+        ar& y;
     }
 };
 
@@ -144,6 +162,13 @@ struct move {
     uint64_t getIndex() const {
         return ((from.y << 3) | from.x) << 6 | ((to.y << 3) | to.x);
     }
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int version) {
+        ar& from;
+        ar& to;
+        ar& reward;
+    }
 };
 
 struct move_hash {
@@ -154,10 +179,9 @@ struct move_hash {
     }
 };
 
-class Layer {
+struct Layer {
     uint64_t board; // 8x8 chessboard represented as 64 bits
 
-public:
     Layer() : board(0) {} // Initialize all bits to 0
 
     Layer(uint64_t board) : board(board) {} // Initialize with a given board
@@ -244,6 +268,11 @@ public:
             std::cout << "\n";
         }
     }
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int version) {
+        ar& board;
+    }
 };
 
 Layer pawn_map() { //3840
@@ -301,6 +330,19 @@ struct player {
         score = 0;
         color = c;
         active = true;
+    }
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int version) {
+        ar& _pawn;
+        ar& _rook;
+        ar& _knight;
+        ar& _bishop;
+        ar& _king;
+        ar& _attacking; //not used
+        ar& score;
+        ar& color;
+        ar& active;
     }
 };
 
@@ -477,6 +519,14 @@ struct state {
              sizeof(float) },          // Stride for h
             flattened.data()           // Pointer to data
             );
+    }
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int version) {
+        ar& players;
+        ar& turn;
+        ar& finished;
+        ar& no_progress_count;
     }
 };
 
@@ -929,6 +979,12 @@ py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int 
         );
 }
 
+struct game;
+struct MCTSNode;
+BOOST_CLASS_VERSION(game, 1)
+BOOST_CLASS_VERSION(MCTSNode, 1)
+BOOST_SERIALIZATION_SHARED_PTR(MCTSNode)
+
 // Struct to represent MCTS nodes
 struct MCTSNode {
     std::unordered_map<move, std::array<float, 4>, move_hash> W;  // Total value of each action
@@ -943,6 +999,8 @@ struct MCTSNode {
     int N_total = 0;
 
     MCTSNode(const state& s, MCTSNode* p = nullptr) : current_state(s), parent(p) {}
+
+    MCTSNode() = default;
 
     
     //PUCT (https://medium.com/oracledevs/lessons-from-alphazero-part-3-parameter-tweaking-4dceb78ed1e5)
@@ -960,9 +1018,6 @@ struct MCTSNode {
             //double u = c_puct * action_probabilities.at(a) * sqrt(N_total) / (n + 1e-6);
             //double score = q + u;
             double score = std::get<0>(W.at(a)) / (n + 1e-6) + (c_puct * P.at(a) * sqrt(N_total)) / (n + 1 + 1e-6);
-            //if(std::get<0>(W.at(a)) > 0)
-            //std::cout << n << "\t\t" << std::get<0>(W.at(a)) << "\t\t" << P.at(a) << "\t\t" << score << "\t\t" << a << std::endl;
-
             if (score > best_score) {
                 best_score = score;
                 best_action = a;
@@ -1000,6 +1055,20 @@ struct MCTSNode {
             }
         }
     }
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int version) {
+        ar& W;
+        ar& N;
+        ar& P;
+        ar& children;
+        //ar& parent; - isn't necessary in game_storage
+        ar& current_state;
+        ar& is_terminal;
+        ar& is_leaf;
+        ar& value;
+        ar& N_total;
+    }
 };
 
 // Struct to represent the game with a vector of states
@@ -1035,15 +1104,19 @@ struct game {
         current_search_position = root;
     }
 
+    game (const std::string& filename) {
+        std::ifstream ifs(filename, std::ios::binary);
+        boost::archive::binary_iarchive ia(ifs);
+        ia >> *this;
+        ifs.close();
+    }
+
     // Generate input for the neural network (last n states)
     py::array_t<float> get_evaluate_sample(int T, int skip) {
         try {
             std::vector<state> last_states(states); //starts with already "played" states
             last_states.reserve(states.size() + mcts_trajectory.size());
-            //std::cout << "last_states size: " << last_states.size() << std::endl;
             auto node_ptr = root.get();
-            //std::cout << "node_ptr: " << node_ptr << std::endl;
-            //std::cout << "trajectory size: " << trajectory.size() << std::endl;
             for (auto it = mcts_trajectory.begin(); it != mcts_trajectory.end(); ++it) { // add MCTS states
                 auto it_find = node_ptr->children.find(*it);
                 if (it_find != node_ptr->children.end())
@@ -1051,9 +1124,7 @@ struct game {
                 else
                     break;
                 last_states.push_back(node_ptr->current_state);
-                //std::cout << "last_states size: " << last_states.size() << std::endl;
             }
-            //std::cout << "final last_states size: " << last_states.size() << std::endl;
             return states_to_numpy(last_states, T, skip);
         }
         catch (const std::exception& e) {
@@ -1102,38 +1173,10 @@ struct game {
             node->is_leaf = false;
 
             int leaf_turn = node->current_state.turn;
-
-            /*std::cout << "trajectory size: " << trajectory.size() << std::endl;
-            std::cout << "root: " << root << std::endl;
-            std::cout << "node: " << node << std::endl;*/
-
-            /*auto node_pr = root.get();
-            for (auto it = trajectory.begin(); it != trajectory.end(); ++it) { // iterate through trajectory from end to the root
-                std::cout << "node_pr: " << node_pr << std::endl;
-                std::cout << "is node_pr leaf: " << node_pr->is_leaf << std::endl;
-                std::cout << "node_pr childer size: " << node_pr->children.size() << std::endl;
-                for (const auto& pair : node_pr->children) {
-                    std::cout << "Key: " << pair.first << ", Value: " << pair.second << "\n";
-                }
-                std::cout << "*it: " << *it << std::endl;
-                std::cout << "node_pr children: " << node_pr->children[*it].get() << std::endl;
-                node_pr = node_pr->children[*it].get();
-            }*/
-
             for (auto it = mcts_trajectory.rbegin(); it != mcts_trajectory.rend(); ++it) { // iterate through trajectory from end to the root
-                /*std::cout << "node: " << node << std::endl;
-                std::cout << "parent node: " << node->parent << std::endl;
-                std::cout << "*it: " << *it << std::endl;
-                std::cout << "node W size: " << node->W.size() << std::endl;*/
                 node = node->parent;
                 if (!node) break;
                 int current_turn = node->current_state.turn; 
-                /*if (node->W.find(*it) != node->W.end()) {
-                    std::cout << "W found: " << std::get<0>(node->W[*it]) << std::endl;
-                }
-                else {
-                    std::cout << "W not wound." << std::endl;
-                }*/
                 // get<n> = V_ptr[4+n+turn_current-turn_leaf % 4]
                 node->W[*it][0] += V_ptr[(4 + current_turn - leaf_turn) % 4];
                 node->W[*it][1] += V_ptr[(5 + current_turn - leaf_turn) % 4];
@@ -1146,20 +1189,13 @@ struct game {
             /*Start again from root and do while not reached leaf node...*/
             mcts_trajectory.clear();
             budget--;
-            /*std::cout << "root: " << root << std::endl;
-            std::cout << "current_search_position: " << current_search_position << std::endl;*/
             current_search_position = root;
-
-            /*std::cout << "root: " << root << std::endl;
-            std::cout << "give_evaluated_sample: back propagated"<< std::endl;*/
-
             while (!current_search_position->is_leaf && budget >= 0) {
                 auto next_move = current_search_position->select_best_action();
                 mcts_trajectory.push_back(next_move);
                 //std::cout << "Trajectory push: " << next_move << ", Value: " << current_search_position->children[next_move] << "\n";
                 current_search_position = current_search_position->children[next_move];
                 if (current_search_position->is_terminal) { //if terminal we can determine value without evaluating by nn
-                    //std::cout << "Found terminal state" << std::endl;
                     current_search_position->value = current_search_position->current_state.getFinalReward();
                     auto& values = current_search_position->value;
                     
@@ -1178,7 +1214,6 @@ struct game {
                         node->N[*it]++;
                         node->N_total++;
                     }
-
                     mcts_trajectory.clear();
                     budget--;
                     current_search_position = root;
@@ -1297,26 +1332,46 @@ struct game {
         std::uniform_int_distribution<> dist(0, states.size() - 2);
         return get_sample(T, dist(global_rng()));
     }
+
+    template <class Archive>
+    void serialize(Archive& ar, const unsigned int version) {
+        ar& states;
+        ar& game_trajectory;
+        ar& probabilities;
+        ar& root;
+        ar& current_search_position;
+        ar& finished;
+        ar& final_reward;
+        ar& mcts_trajectory;
+    }
+
+    void save_game(const std::string& filename) {
+        std::ofstream ofs(filename, std::ios::binary);
+        boost::archive::binary_oarchive oa(ofs);
+        oa << *this;
+        ofs.close();
+    }
 };
 
 struct game_storage {
     std::deque<game> games;
-    std::mutex mutex_;  // for synchronization
     size_t max_size;
 
     game_storage(size_t max_size = 100000) : max_size(max_size) {}
 
     void add_game(game& g) {
-        std::lock_guard<std::mutex> lock(mutex_);
         if (games.size() >= max_size) {
             games.pop_front();
         }
-        games.push_back(std::move(g));
+        games.push_back(g);
+    }
+
+    void load_game(const std::string& filename) {
+        games.push_back(filename); //calls constructor which loads binary file
     }
 
     //shouldn't be used during training, game can be deleted before calling some other game function
     game* get_game(int index) {
-        std::lock_guard<std::mutex> lock(mutex_);
         if (index >= 0) {
             if (index >= games.size()) throw std::out_of_range("Index out of bounds");
             return &games[index];
@@ -1329,7 +1384,6 @@ struct game_storage {
 
     //get random sample
     std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample(int T = 8) {
-        std::lock_guard<std::mutex> lock(mutex_);
         std::vector<int> game_sizes(games.size());
         for (size_t i = 0; i < games.size(); i++) {
             game_sizes[i] = games[i].size() - 2;
@@ -1339,7 +1393,6 @@ struct game_storage {
     }
 
     size_t size() { 
-        std::lock_guard<std::mutex> lock(mutex_);
         return games.size(); 
     }
 };
@@ -1405,11 +1458,13 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("step_random", &game::step_random, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("to_numpy", &game::to_numpy)
         .def("get_sample", &game::get_sample)
-        .def("get_random_sample", &game::get_random_sample);
+        .def("get_random_sample", &game::get_random_sample)
+        .def("save_game", &game::save_game);
     py::class_<game_storage>(m, "game_storage")
         .def(py::init<size_t>(), py::arg("max_size") = 100000)
         .def("add_game", &game_storage::add_game)
-        .def("get_game", &game_storage::get_game, py::return_value_policy::reference_internal)
+        .def("load_game", &game_storage::load_game)
+        .def("get_game", &game_storage::get_game)
         .def("get_random_sample", &game_storage::get_random_sample)
         .def("size", &game_storage::size);  //number of stored games
     py::class_<position>(m, "position")
@@ -1437,11 +1492,14 @@ PYBIND11_MODULE(chaturajienv, m) {
 int main() {
     state s;
     game g;
-    auto val = g.to_numpy(1);
+    //auto val = g.to_numpy(1);
     s.printScore();
     s.printTurn();
     s.printBoard();
     s.printLegalMoves();
+
+    g.save_game("file2.json");
+    game g_new("file2.json");
     for (int i = 0; i < 100; i++) {
         std::cout << "Enter move (from_x from_y to_x to_y): ";
         move m;

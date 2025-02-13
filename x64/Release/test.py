@@ -13,6 +13,7 @@ import faulthandler
 from network import AlphaZeroNet
 import os
 import psutil
+import pickle
 faulthandler.enable()
 
 total_score = (0,0,0,0)
@@ -22,7 +23,7 @@ game_storage = chaturajienv.game_storage(1000)
 p = psutil.Process(os.getpid())
 p.cpu_affinity([1])
 
-for g in range(20):
+for g in range(2):
     game = chaturajienv.game()
     start_time = time.time()
     for j in range(10000):
@@ -65,8 +66,9 @@ for g in range(20):
                 break
     print('total score:', total_score)
 
+    game.save_game('game' + str(g) + '.json')
     
-    game_storage.add_game(game)
+    game_storage.load_game('game' + str(g) + '.json')
 
 (sample, policy, value) = game_storage.get_random_sample(8)
 batch_size = 1000

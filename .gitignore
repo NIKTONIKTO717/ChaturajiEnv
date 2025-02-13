@@ -22,7 +22,9 @@ mono_crash.*
 [Rr]elease/
 [Rr]eleases/
 x64/
+chaturajienv/lib/
 x86/
+#Boost
 [Ww][Ii][Nn]32/
 [Aa][Rr][Mm]/
 [Aa][Rr][Mm]64/
