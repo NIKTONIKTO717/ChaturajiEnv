@@ -36,7 +36,7 @@ def main():
     mcts.start()
 
     while mcts.cache_size() < 100:
-        print(f"Game storage size: {mcts.cache_size()}")
+        print(f"cache size: {mcts.cache_size()}")
         time.sleep(10)
 
     print('cache size:', mcts.cache_size())
@@ -48,11 +48,13 @@ def main():
 
     # training loop
     for i in range(1000):
+        print(f"Epoch {i}")
         samples, policies, values = mcts.get_batch(1000)
 
         samples = torch.tensor(samples, dtype=torch.float32, device=device_training)
         policies = torch.tensor(policies, dtype=torch.float32, device=device_training)
         values = torch.tensor(values, dtype=torch.float32, device=device_training)
+        print(f"Samples: {samples.shape}, Policies: {policies.shape}, Values: {values.shape}")
 
         # Forward pass
         policy_pred, value_pred = net_training(samples)
@@ -61,6 +63,7 @@ def main():
         value_loss = F.mse_loss(value_pred.squeeze(), values)
 
         total_loss = total_loss = policy_loss + value_loss
+        print("Forward pass done")
 
         # Backpropagation
         optimizer.zero_grad()

@@ -23,11 +23,11 @@ game_storage = chaturajienv.game_storage(1000)
 p = psutil.Process(os.getpid())
 p.cpu_affinity([1])
 
-for g in range(3):
+for g in range(1):
     game = chaturajienv.game()
     start_time = time.time()
     for j in range(10000):
-        budget = 100 #800 in AlphaZero
+        budget = 800 #800 in AlphaZero
         while budget > 0:
             sample = game.get_evaluate_sample(8, 0)
 
@@ -36,12 +36,6 @@ for g in range(3):
             p = np.random.rand(4096)
             #p = p.squeeze(0).cpu().numpy()
             #v = v.squeeze(0).cpu().numpy()
-            p_mask = game.get_legal_moves_mask()
-            if budget == 100:
-                #add dirichlet noise
-                p = 0.75 * p + 0.25 * np.random.dirichlet([0.03] * 4096)
-            p = p * p_mask
-            p = p / np.sum(p)
             #p = np.exp(p)/np.sum(np.exp(p))
             #p = torch.nn.functional.softmax(p, dim=1)
             budget = game.give_evaluated_sample(p, v, budget)
@@ -69,8 +63,8 @@ for g in range(3):
     game_storage.load_game('game' + str(g) + '.json')
 
 print(game_storage.size())
-#game_storage.get_game(0).get(1).printBoard()
-
+game_storage.get_game(0).get_sample(8, 1)
+print("get_sample done")
 (sample, policy, value) = game_storage.get_random_sample(8)
 batch_size = 1000
 sample_shape = sample.shape

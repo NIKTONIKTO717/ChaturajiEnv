@@ -1028,12 +1028,14 @@ struct MCTSNode {
     }
 
     // Expand a node by adding child nodes for all legal moves
-    void expand(float* P_ptr) {
+    //processes P - multiplay by mask, normalize and add dirichlet if in root
+    void expand(float* P_ptr, bool dirichlet = false) {
         auto moves = current_state.getLegalMoves();
         children.reserve(moves.size());
         N.reserve(moves.size());
         W.reserve(moves.size());
         P.reserve(moves.size());
+        float p_sum = 0.0f;
         for (auto& move : moves) {
             if (children.find(move) == children.end()) {
                 state state_copy = current_state;
@@ -1047,11 +1049,43 @@ struct MCTSNode {
                     children[move]->value = state_copy.getFinalReward();
                 }
                 children[move]->parent = this;
-                N[move] = 0;
-                W[move] = { 0.0f, 0.0f, 0.0f, 0.0f };
-                P[move] = P_ptr[move.getIndex()];
+            }
+            N[move] = 0;
+            W[move] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            P[move] = P_ptr[move.getIndex()];
+            p_sum += P[move];
+        }
+        if (p_sum == 0) { 
+            current_state.printLegalMoves();
+            current_state.printBoard();
+            std::cout << "---" << std::endl;
+            throw std::runtime_error("expand(): No legal move."); 
+        }
+        for (auto& [move, p] : P) {
+                p /= p_sum;
+        }
+        //normalizing, adding dirichlet
+        if (dirichlet) {
+            std::gamma_distribution<float> gamma_dist(0.03f , 1.0f); //alpha = 0.03 in AlphaZero
+            std::vector<float> dirichlet_noise(moves.size());
+            float dir_sum = 0.0f;
+            //get dirichlet noise
+            for (size_t i = 0; i < P.size(); i++) {
+                dirichlet_noise[i] = gamma_dist(global_rng());
+                dir_sum += dirichlet_noise[i];
+            }
+            //normalize noise
+            for (float& val : dirichlet_noise) {
+                val /= dir_sum;
+            }
+            //add noise
+            size_t index = 0;
+            for (auto& [move, p] : P) {
+                p = 0.75f * p + 0.25f * dirichlet_noise[index++];
             }
         }
+        
+
     }
 
     template <class Archive>
@@ -1088,7 +1122,7 @@ struct game {
         if (n >= 0)
             return states[n];
         else 
-            return states[states.size() - n];
+            return states[states.size() + n];
     }
 
     void add_state(state new_state) {
@@ -1103,6 +1137,7 @@ struct game {
     }
 
     game (const std::string& filename) {
+        //TODO: add parent pointer set procedure to change from nullptr 
         std::ifstream ifs(filename, std::ios::binary);
         boost::archive::binary_iarchive ia(ifs);
         ia >> *this;
@@ -1167,7 +1202,7 @@ struct game {
 
             auto* node = current_search_position.get();
             node->value = { V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3] };
-            node->expand(P_ptr);
+            node->expand(P_ptr, current_search_position == root); //adds dirichlet if at root 
             node->is_leaf = false;
 
             int leaf_turn = node->current_state.turn;
@@ -1312,9 +1347,27 @@ struct game {
 
     std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_sample(int T, int skip = 0) {
         auto index_last = states.size() - (skip + 2); //(+1) size is last_index+1, (+1) last state in sample is last state before terminated
+        if(index_last < 0) throw std::out_of_range("get_sample(): skip argument out of bounds");
         auto& values = root->value;
-        auto turn = states[index_last].turn;
-        std::array<float, 4> value = { values[(4 - turn) % 4], values[(5 - turn) % 4], values[(6 - turn) % 4], values[(7 - turn) % 4] };
+        auto& turn = root->current_state.turn;
+        /*std::cout << "ROOT \n ----\n";
+        std::cout << "Root value: " << values[0] << ',' << values[1] << ',' << values[2] << ',' << values[3] << std::endl;
+        std::cout << "Root turn: " << root->current_state.turn << std::endl;
+        std::cout << "Root "; root->current_state.printScore();
+        std::cout << "Root final reward: " << final_reward[0] << "," << final_reward[1] << "," << final_reward[2] << "," << final_reward[3] << "\n";
+        std::cout << "----\nROOT END\n";*/
+        auto last_turn = states[index_last].turn;
+        std::array<float, 4> value = { final_reward[(4 + last_turn) % 4], final_reward[(5 + last_turn) % 4], final_reward[(6 + last_turn) % 4], final_reward[(7 + last_turn) % 4] };
+        /*states[index_last].printBoard();
+        states[index_last].printScore();
+        std::cout << "Last state value: " << value[0] << ',' << value[1] << ',' << value[2] << ',' << value[3] << std::endl;
+        std::cout << "Last state turn: " << states[index_last].turn << std::endl;
+        for (int i = 0; i <= index_last; i++) {
+            states[i].printBoard();
+            states[i].printScore();
+            std::cout << "Local value: " << values[(4 - states[i].turn) % 4] << ',' << values[(5 - states[i].turn) % 4] << ',' << values[(6 - states[i].turn) % 4] << ',' << values[(7 - states[i].turn) % 4] << std::endl;
+            std::cout << "---" << std::endl;
+        }*/
 
         return { 
             states_to_numpy(states, T, skip + 1),  //(+1) We don't want sample where last state is terminated
@@ -1327,7 +1380,7 @@ struct game {
     std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample(int T) {
         // (-1) for states.size() = x can be optained x - 1 samples
         // (-1) for last terminated state
-        std::uniform_int_distribution<> dist(0, states.size() - 2);
+        std::uniform_int_distribution<> dist(0, (int) states.size() - 2);
         return get_sample(T, dist(global_rng()));
     }
 
@@ -1369,14 +1422,14 @@ struct game_storage {
     }
 
     //shouldn't be used during training, game can be deleted before calling some other game function
-    game* get_game(int index) {
+    game get_game(int index) {
         if (index >= 0) {
-            if (index >= games.size()) throw std::out_of_range("Index out of bounds");
-            return &games[index];
+            if (index >= games.size()) throw std::out_of_range("get_game(): Index out of bounds");
+            return games[index];
         }
         else {
-            if (- index > games.size()) throw std::out_of_range("Index out of bounds");
-            return &games[games.size() + index];
+            if (- index > games.size()) throw std::out_of_range("get_game(): Index out of bounds");
+            return games[games.size() + index];
         } 
     }
 
@@ -1455,7 +1508,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("step_stochastic", &game::step_stochastic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_random", &game::step_random, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("to_numpy", &game::to_numpy)
-        .def("get_sample", &game::get_sample)
+        .def("get_sample", &game::get_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("get_random_sample", &game::get_random_sample)
         .def("save_game", &game::save_game);
     py::class_<game_storage>(m, "game_storage")
@@ -1463,7 +1516,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("add_game", &game_storage::add_game)
         .def("load_game", &game_storage::load_game)
         .def("get_game", &game_storage::get_game)
-        .def("get_random_sample", &game_storage::get_random_sample)
+        .def("get_random_sample", &game_storage::get_random_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("size", &game_storage::size);  //number of stored games
     py::class_<position>(m, "position")
         .def(pybind11::init<uint, uint>())

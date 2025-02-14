@@ -26,10 +26,11 @@ def run_mcts_game(process_id, net, stop_event, search_budget):
 
     print(f"Process {process_id} started on core {process_id}")
     game_index = 0
+    start_time = time.time()
+    moves = 0
     while not stop_event.is_set():
-        use_model = True # (game_storage.size() > 10000) # first 10000 games are using vanilla MCTS
+        use_model = False # (game_storage.size() > 10000) # first 10000 games are using vanilla MCTS
         game = chaturajienv.game()
-        start_time = time.time()
         for j in range(10000):
             budget = search_budget #800 in AlphaZero
             while budget > 0:
@@ -43,33 +44,21 @@ def run_mcts_game(process_id, net, stop_event, search_budget):
                 else:
                     p = np.random.rand(4096)
                     v = np.random.rand(4)
-
-                p_mask = game.get_legal_moves_mask()
-                if np.sum(p_mask) == 0:
-                    print(p_mask)
-                    #throw error exception
-                    raise Exception('ZERO MASK')
-                    
-                if budget == search_budget:
-                    #add dirichlet noise same as AlphaZero
-                    p = 0.75 * p + 0.25 * np.random.dirichlet([0.03] * 4096)
-                p = p * p_mask ## TODO: do this in C++
-                if np.sum(p) == 0:
-                    raise Exception('ZERO P')
-                p = p / np.sum(p)
                 #p = np.exp(p)/np.sum(np.exp(p))
                 #p = torch.nn.functional.softmax(p, dim=1)
 
                 budget = game.give_evaluated_sample(p, v, budget)
 
             if(game.step_stochastic(1.0)):
-                print('Game', f'{process_id}-{game_index}', 'finished after', j+1, 'moves')
+                #print('Game', f'{process_id}-{game_index}', 'finished after', j+1, 'moves')
+                #print(game.final_reward)
+                #print("time per move:", (time.time() - start_time) / (j+1))
                 game_index += 1
-                print(game.final_reward)
-                print("time per move:", (time.time() - start_time) / (j+1))
+                moves += j+1
                 break
-        
+
         game.save_game(f'cache_games/game_{process_id}_{game_index}.bin')
+    print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / moves):.5g}')
 
 class MCTS:
     def __init__(self, net, device, storage_size = 100000, num_processes = 8, budget = 800):
