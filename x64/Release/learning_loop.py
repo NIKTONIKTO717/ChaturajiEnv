@@ -17,12 +17,12 @@ faulthandler.enable()
 
 # === Hyperparameters ===
 LEARNING_RATE = 3e-4       # Recommended: 1e-4 to 3e-4
-BATCH_SIZE = 128           # Recommended: 512-2048 (depending on memory)
+BATCH_SIZE = 1024           # Recommended: 512-2048 (depending on memory)
 L2_REG = 1e-4              # Weight decay (L2 regularization) to prevent overfitting
 EPOCHS = 10                # Adjust as needed
 CPU_CORES = 6              # Number of CPU cores to use for MCTS
 STORAGE_SIZE = 100000      # Number of games to store in the game storage
-BUDGET = 80                # Number of MCTS simulations per move
+BUDGET = 800               # Number of MCTS simulations per move
 
 def main():
     device_training = (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
@@ -51,7 +51,7 @@ def main():
     mcts.start()
 
     # training loop
-    for l in range(100):
+    for l in range(2):
         for e in range(EPOCHS): #from alpha zero - checkpoint every 1000 steps
             samples, policies, values = mcts.get_batch(BATCH_SIZE)
 

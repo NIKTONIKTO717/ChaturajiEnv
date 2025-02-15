@@ -39,8 +39,8 @@ def play_game(process_id, net_acting, net_training, directory, n_games, search_b
                 sample = game.get_evaluate_sample(8, 0)
                 sample = torch.from_numpy(sample).unsqueeze(0)
                 # for random and vanilla MCTS is used vanilla MCTS estimation
-                if players[game.get(j).turn] == -1 or players[game.get(j).turn] == 0:
-                    p = np.zeros(4096)
+                if players[game.get(j).turn] == -1 or players[game.get(j).turn] == 0: #TODO: change to local turn...
+                    p = np.ones(4096)
                     v = np.zeros(4)
                 else:
                     if players[game.get(j).turn] == 1:
@@ -54,12 +54,12 @@ def play_game(process_id, net_acting, net_training, directory, n_games, search_b
 
                 budget = game.give_evaluated_sample(p, v, budget)
 
-            if players[game.get(j).turn] == -2:
-                game.step_random()
-                break
+            if players[game.get(j).turn] == -1:
+                if game.step_random():
+                    break
             else:
-                game.step_deterministic()
-                break
+                if game.step_deterministic():
+                    break
 
         #moves_sum += game.size()
         #score_sum = tuple(map(sum, zip(score_sum, game.get(j+1).get_score_default())))
@@ -87,9 +87,6 @@ class Eval:
         for file in os.listdir(f'{directory}'):
             game = chaturajienv.load_game(f'{directory}/{file}')
             moves_sum += game.size()
-            print('filename:', file)
-            print('score:', game.get(-1).get_score_default())
-            print('reward:', game.final_reward)
             score_sum = tuple(map(sum, zip(score_sum, game.get(-1).get_score_default())))
             rewards.append(game.final_reward)
         return moves_sum, score_sum, rewards

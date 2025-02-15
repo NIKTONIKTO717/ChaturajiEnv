@@ -49,7 +49,11 @@ namespace py = pybind11;
 using uint = unsigned int;
 
 std::mt19937& global_rng() {
-    static thread_local std::mt19937 gen(std::random_device{}());
+    static thread_local std::mt19937 gen([]() {
+        auto seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        std::seed_seq seq{ std::random_device{}(), static_cast<unsigned>(seed) };
+        return std::mt19937(seq);
+        }());
     return gen;
 }
 
@@ -1053,7 +1057,7 @@ struct MCTSNode {
             current_state.printLegalMoves();
             current_state.printBoard();
             std::cout << "---" << std::endl;
-            throw std::runtime_error("expand(): No legal move."); 
+            throw std::runtime_error("expand(): No legal move.");
         }
         for (auto& [move, p] : P) {
                 p /= p_sum;
