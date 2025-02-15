@@ -1136,7 +1136,7 @@ struct game {
         current_search_position = root;
     }
 
-    game (const std::string& filename) {
+    game(const std::string& filename) {
         //TODO: add parent pointer set procedure to change from nullptr 
         std::ifstream ifs(filename, std::ios::binary);
         boost::archive::binary_iarchive ia(ifs);
@@ -1403,6 +1403,10 @@ struct game {
         ofs.close();
     }
 };
+
+game load_game(const std::string& filename) {
+    return game(filename);
+}
 
 struct game_storage {
     std::deque<game> games;

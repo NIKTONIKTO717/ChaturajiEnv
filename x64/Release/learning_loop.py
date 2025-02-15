@@ -10,15 +10,18 @@ import pandas as pd
 import multiprocessing
 import time
 import faulthandler
-from network import *
-from mcts import *
+from network import AlphaZeroNet
+from mcts import MCTS
+from evaluation import Eval
 faulthandler.enable()
 
 # === Hyperparameters ===
 LEARNING_RATE = 3e-4       # Recommended: 1e-4 to 3e-4
 BATCH_SIZE = 1024          # Recommended: 512-2048 (depending on memory)
 L2_REG = 1e-4              # Weight decay (L2 regularization) to prevent overfitting
-EPOCHS = 1000              # Adjust as needed
+EPOCHS = 10                # Adjust as needed
+CPU_CORES = 8              # Number of CPU cores to use for MCTS
+STORAGE_SIZE = 100000      # Number of games to store in the game storage
 
 def main():
     device_training = (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
@@ -31,7 +34,7 @@ def main():
 
     #game_storage = chaturajienv.game_storage(1000)
 
-    mcts = MCTS(net_acting, device_acting, 100000, 8, 80)
+    mcts = MCTS(net_acting, device_acting, STORAGE_SIZE, CPU_CORES, 800)
 
     mcts.start()
 
@@ -47,30 +50,36 @@ def main():
     mcts.start()
 
     # training loop
-    for i in range(1000):
-        print(f"Epoch {i}")
-        samples, policies, values = mcts.get_batch(1000)
+    for l in range(2):
+        for e in range(EPOCHS): #from alpha zero - checkpoint every 1000 steps
+            print(f"Epoch {e}")
+            samples, policies, values = mcts.get_batch(BATCH_SIZE)
 
-        samples = torch.tensor(samples, dtype=torch.float32, device=device_training)
-        policies = torch.tensor(policies, dtype=torch.float32, device=device_training)
-        values = torch.tensor(values, dtype=torch.float32, device=device_training)
-        print(f"Samples: {samples.shape}, Policies: {policies.shape}, Values: {values.shape}")
+            samples = torch.tensor(samples, dtype=torch.float32, device=device_training)
+            policies = torch.tensor(policies, dtype=torch.float32, device=device_training)
+            values = torch.tensor(values, dtype=torch.float32, device=device_training)
+            print(f"Samples: {samples.shape}, Policies: {policies.shape}, Values: {values.shape}")
 
-        # Forward pass
-        policy_pred, value_pred = net_training(samples)
+            # Forward pass
+            policy_pred, value_pred = net_training(samples)
 
-        policy_loss = F.cross_entropy(policy_pred, policies)
-        value_loss = F.mse_loss(value_pred.squeeze(), values)
+            policy_loss = F.cross_entropy(policy_pred, policies)
+            value_loss = F.mse_loss(value_pred.squeeze(), values)
 
-        total_loss = total_loss = policy_loss + value_loss
-        print("Forward pass done")
+            total_loss = total_loss = policy_loss + value_loss
+            print("Forward pass done")
 
-        # Backpropagation
-        optimizer.zero_grad()
-        total_loss.backward()
-        optimizer.step()
+            # Backpropagation
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
+            
+            print(f"Epoch {e}: Policy Loss: {policy_loss.item():.4f}, Value Loss: {value_loss.item():.4f}, Total Loss: {total_loss.item():.4f}")
 
-        print(f"Epoch {i}: Policy Loss: {policy_loss.item():.4f}, Value Loss: {value_loss.item():.4f}, Total Loss: {total_loss.item():.4f}")
+        #evaluate the network against random player
+        evaluator = Eval(net_acting, net_training, CPU_CORES, 10)
+        evaluator.run(200, (2, 0, 0, 0))
+        evaluator.run(200, (2, 1, 1, 1))
 
 if __name__ == '__main__':
     main()
