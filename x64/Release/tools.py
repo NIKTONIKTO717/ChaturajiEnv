@@ -16,7 +16,7 @@ import os
 from network import AlphaZeroNet
 faulthandler.enable()
 
-def set_process(process_id, info=True):
+def set_process(process_id, info=False):
     try:
         p = psutil.Process(os.getpid())
         p.cpu_affinity([process_id])  # Pin to specific CPU core
@@ -27,7 +27,7 @@ def set_process(process_id, info=True):
         print(f"Process {process_id} started")
 
 def directory_name(hash_acting, hash_training, search_budget, players):
-    return f'{hash_acting}_{hash_training}_{search_budget}_{players[0]}_{players[1]}_{players[2]}_{players[3]}'
+    return f'evaluated_games/{hash_acting}_{hash_training}_{search_budget}_{players[0]}_{players[1]}_{players[2]}_{players[3]}'
 
 # counts the number of times each player finished at each rank
 # if multiple players finish at the same rank, they all get the same rank

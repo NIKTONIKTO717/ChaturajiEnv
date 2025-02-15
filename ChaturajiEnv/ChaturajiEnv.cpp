@@ -1031,24 +1031,18 @@ struct MCTSNode {
     //processes P - multiplay by mask, normalize and add dirichlet if in root
     void expand(float* P_ptr, bool dirichlet = false) {
         auto moves = current_state.getLegalMoves();
-        children.reserve(moves.size());
-        N.reserve(moves.size());
-        W.reserve(moves.size());
-        P.reserve(moves.size());
         float p_sum = 0.0f;
         for (auto& move : moves) {
             if (children.find(move) == children.end()) {
                 state state_copy = current_state;
                 state_copy.step(move);
-                children[move] = std::make_shared<MCTSNode>(std::move(state_copy), this);
-                children[move] = std::make_shared<MCTSNode>(current_state, this);
+                children.emplace(move, std::make_shared<MCTSNode>(std::move(state_copy), this));
                 children[move]->current_state.step(move);
                 //std::cout << "Setting: " << move << ", Value: " << children[move] << "\n";
                 if (children[move]->current_state.finished) {
                     children[move]->is_terminal = true;
                     children[move]->value = state_copy.getFinalReward();
                 }
-                children[move]->parent = this;
             }
             N[move] = 0;
             W[move] = { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -1074,18 +1068,12 @@ struct MCTSNode {
                 dirichlet_noise[i] = gamma_dist(global_rng());
                 dir_sum += dirichlet_noise[i];
             }
-            //normalize noise
-            for (float& val : dirichlet_noise) {
-                val /= dir_sum;
-            }
             //add noise
             size_t index = 0;
             for (auto& [move, p] : P) {
-                p = 0.75f * p + 0.25f * dirichlet_noise[index++];
+                p = 0.75f * p + (0.25f * dirichlet_noise[index++] / dir_sum);
             }
         }
-        
-
     }
 
     template <class Archive>
@@ -1182,7 +1170,7 @@ struct game {
     }
 
     // returns new budget (number of left rollouts)
-    int give_evaluated_sample(py::array_t<float>& P, py::array_t<float>& V, int budget) {
+    int give_evaluated_sample(const py::array_t<float>& P, const py::array_t<float>& V, int budget) {
         try {
             if (budget <= 0) return budget;
             /*current_search_position is already leaf node, not expanded*/
@@ -1209,18 +1197,19 @@ struct game {
             for (auto it = mcts_trajectory.rbegin(); it != mcts_trajectory.rend(); ++it) { // iterate through trajectory from end to the root
                 node = node->parent;
                 if (!node) break;
-                int current_turn = node->current_state.turn; 
+                int turn_diff = node->current_state.turn - leaf_turn;
+                auto& W_ref = node->W[*it];
                 // get<n> = V_ptr[4+n+turn_current-turn_leaf % 4]
-                node->W[*it][0] += V_ptr[(4 + current_turn - leaf_turn) % 4];
-                node->W[*it][1] += V_ptr[(5 + current_turn - leaf_turn) % 4];
-                node->W[*it][2] += V_ptr[(6 + current_turn - leaf_turn) % 4];
-                node->W[*it][3] += V_ptr[(7 + current_turn - leaf_turn) % 4];
+                W_ref[0] += V_ptr[(4 + turn_diff) % 4];
+                W_ref[1] += V_ptr[(5 + turn_diff) % 4];
+                W_ref[2] += V_ptr[(6 + turn_diff) % 4];
+                W_ref[3] += V_ptr[(7 + turn_diff) % 4];
                 node->N[*it]++;
                 node->N_total++;
             }
 
             /*Start again from root and do while not reached leaf node...*/
-            mcts_trajectory.clear();
+            mcts_trajectory.resize(0);
             budget--;
             current_search_position = root;
             while (!current_search_position->is_leaf && budget >= 0) {
@@ -1229,7 +1218,7 @@ struct game {
                 //std::cout << "Trajectory push: " << next_move << ", Value: " << current_search_position->children[next_move] << "\n";
                 current_search_position = current_search_position->children[next_move];
                 if (current_search_position->is_terminal) { //if terminal we can determine value without evaluating by nn
-                    current_search_position->value = current_search_position->current_state.getFinalReward();
+                    //current_search_position->value = current_search_position->current_state.getFinalReward();
                     auto& values = current_search_position->value;
                     
                     node = current_search_position.get();
@@ -1238,16 +1227,17 @@ struct game {
                     for (auto it = mcts_trajectory.rbegin(); it != mcts_trajectory.rend(); ++it) { // iterate through trajectory from end to the root
                         node = node->parent;
                         if (!node) break;
-                        int current_turn = node->current_state.turn;
+                        int turn_diff = node->current_state.turn - leaf_turn;
+                        auto& W_ref = node->W[*it];
                         // get<n> = V_ptr[4+n+turn_current-turn_leaf % 4]
-                        node->W[*it][0] += values[(4 + current_turn - leaf_turn) % 4];
-                        node->W[*it][1] += values[(5 + current_turn - leaf_turn) % 4];
-                        node->W[*it][2] += values[(6 + current_turn - leaf_turn) % 4];
-                        node->W[*it][3] += values[(7 + current_turn - leaf_turn) % 4];
+                        W_ref[0] += values[(4 + turn_diff) % 4];
+                        W_ref[1] += values[(5 + turn_diff) % 4];
+                        W_ref[2] += values[(6 + turn_diff) % 4];
+                        W_ref[3] += values[(7 + turn_diff) % 4];
                         node->N[*it]++;
                         node->N_total++;
                     }
-                    mcts_trajectory.clear();
+                    mcts_trajectory.resize(0);
                     budget--;
                     current_search_position = root;
                 }
@@ -1256,8 +1246,7 @@ struct game {
             return budget;
         }
         catch (const std::exception& e) {
-            std::cerr << "C++ Exception: " << e.what() << std::endl;
-            throw py::value_error(e.what());  // Convert C++ exception to Python exception
+            throw std::runtime_error((std::string)"expand(): " + e.what());
         }
     }
 
@@ -1542,6 +1531,7 @@ PYBIND11_MODULE(chaturajienv, m) {
     m.def("printColor", &printColor, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>());
     m.def("getColor", &getColor);
     m.def("make", &make);
+    m.def("load_game", &load_game);
 }
 
 int main() {

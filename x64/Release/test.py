@@ -23,7 +23,9 @@ game_storage = chaturajienv.game_storage(1000)
 p = psutil.Process(os.getpid())
 p.cpu_affinity([1])
 
-for g in range(1):
+start = 0.0
+
+for g in range(10):
     game = chaturajienv.game()
     start_time = time.time()
     for j in range(10000):
@@ -38,7 +40,9 @@ for g in range(1):
             #v = v.squeeze(0).cpu().numpy()
             #p = np.exp(p)/np.sum(np.exp(p))
             #p = torch.nn.functional.softmax(p, dim=1)
+            start_sample = time.time()
             budget = game.give_evaluated_sample(p, v, budget)
+            start+=time.time()-start_sample
 
         if(game.get(j).turn == 0):
             
@@ -61,6 +65,8 @@ for g in range(1):
     print('total score:', total_score)
     game.save_game('game' + str(g) + '.json')
     game_storage.load_game('game' + str(g) + '.json')
+
+print('total time:', start)
 
 print(game_storage.size())
 game_storage.get_game(0).get_sample(8, 1)

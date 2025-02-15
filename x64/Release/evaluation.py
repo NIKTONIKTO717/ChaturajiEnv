@@ -21,14 +21,13 @@ faulthandler.enable()
 #player = 0 -> vanilla MCTS deterministic policy (competitive play)
 #player = 1 -> acting_net MCTS deterministic policy (competitive play)
 #player = 2 -> training_net MCTS deterministic policy (competitive play)
-def play_game(process_id, net_acting, net_training, n_games, search_budget = 800, players = (0,0,0,0)):
+def play_game(process_id, net_acting, net_training, directory, n_games, search_budget = 800, players = (0,0,0,0)):
     tools.set_process(process_id)
     game_index = 0
     start_time = time.time()
     #moves_sum = 0
     #score_sum = (0,0,0,0)
     #rewards = []
-    directory = tools.directory_name(hash(net_acting), hash(net_training), search_budget, players)
     for p in range(4):
         if players[p] not in [-1, 0, 1, 2]:
             raise ValueError('Invalid player value')
@@ -65,7 +64,8 @@ def play_game(process_id, net_acting, net_training, n_games, search_budget = 800
         #moves_sum += game.size()
         #score_sum = tuple(map(sum, zip(score_sum, game.get(j+1).get_score_default())))
         #rewards.append(game.final_reward)
-        game.save_game(f'evaluated_games/{directory}/game_{game_index}.bin')
+        game_index += 1
+        game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
 
 class Eval:
     #acting -> previous network (device = cpu)
@@ -73,6 +73,10 @@ class Eval:
     def __init__(self, net_acting, net_training, num_processes, n_games):
         self.net_acting = net_acting
         self.net_training = net_training
+        self.net_acting_hash = hash(net_acting)
+        self.net_training_hash = hash(net_training)
+        self.device_acting = next(self.net_acting.parameters()).device
+        self.device_training = next(self.net_training.parameters()).device
         self.num_processes = num_processes
         self.n_games = n_games
 
@@ -80,16 +84,22 @@ class Eval:
         moves_sum = 0
         score_sum = (0,0,0,0)
         rewards = []
-        for file in os.listdir(f'evaluated_games/{directory}'):
-            game = chaturajienv.load_game(f'evaluated_games/{directory}/{file}')
+        for file in os.listdir(f'{directory}'):
+            game = chaturajienv.load_game(f'{directory}/{file}')
             moves_sum += game.size()
-            score_sum = tuple(map(sum, zip(score_sum, game.get(game.size()-1).get_score_default())))
+            print('filename:', file)
+            print('score:', game.get(-1).get_score_default())
+            print('reward:', game.final_reward)
+            score_sum = tuple(map(sum, zip(score_sum, game.get(-1).get_score_default())))
             rewards.append(game.final_reward)
         return moves_sum, score_sum, rewards
 
     def run(self, search_budget = 800, players = (0,0,0,0)):
-        directory = tools.directory_name(hash(self.net), search_budget, players)
+        directory = tools.directory_name(self.net_acting_hash, self.net_training_hash, search_budget, players)
         os.makedirs(directory, exist_ok=True)
+        self.net_training.to(self.device_acting)
+        self.net_training.eval()
+        processes = []
         for i in range(self.num_processes):
             p = multiprocessing.Process(
                     target=play_game, 
@@ -97,23 +107,27 @@ class Eval:
                         i, 
                         self.net_acting, 
                         self.net_training, 
+                        directory,
                         self.n_games, 
-                        self.search_budget, 
-                        self.players
+                        search_budget, 
+                        players
                     )
                 )
             p.start()
-            self.processes.append(p)
+            processes.append(p)
         print(f'Evaluation {search_budget}-{players} started')
-        for p in self.processes:
+        for p in processes:
             p.join()
+        self.net_training.to(self.device_training)
+        self.net_training.train()
         moves_sum, score_sum, rewards = self.process_games(directory)
         rewards_sum = tuple(map(sum, zip(*rewards)))
-        print(f'Moves: {moves_sum}, Score: {score_sum}, Rewards: {rewards_sum:.5g}')
+        rewards_sum_formatted = ", ".join([f"{item:.5g}" for item in rewards_sum])
+        print(f'Moves: {moves_sum}, Score: {score_sum}, Rewards: [{rewards_sum_formatted}]')
         rank_counts = tools.rank_counts(rewards)
-        print('\t\t\t1st\t2nd\t3rd\t4th')
+        print('\t\t1st\t2nd\t3rd\t4th')
         for i in range(4):
-            print(f'Player {i} ({players[i]}): {rank_counts[i][0]}\t{rank_counts[i][1]}\t{rank_counts[i][2]}\t{rank_counts[i][3]}')
+            print(f'Player {i} ({players[i]}):\t{rank_counts[i][0]}\t{rank_counts[i][1]}\t{rank_counts[i][2]}\t{rank_counts[i][3]}')
         return moves_sum, score_sum, rewards_sum, rank_counts
         
     

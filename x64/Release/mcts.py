@@ -8,23 +8,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 #import torch.multiprocessing as multiprocessing
-import multiprocessing
+import torch.multiprocessing as multiprocessing
 import time
 import faulthandler
 import psutil
 import os
+import tools
 from network import AlphaZeroNet
 faulthandler.enable()
 
 def run_mcts_game(process_id, net, stop_event, search_budget):
-    """Runs MCTS using the shared model."""
-    try:
-        p = psutil.Process(os.getpid())
-        p.cpu_affinity([process_id])  # Pin to specific CPU core
-    except Exception as e:
-        print(f"Failed to set CPU affinity for process {process_id}: {e}")
-
-    print(f"Process {process_id} started on core {process_id}")
+    tools.set_process(process_id, False)
     game_index = 0
     start_time = time.time()
     moves = 0
