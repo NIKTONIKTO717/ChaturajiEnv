@@ -25,6 +25,7 @@ def run_mcts_game(process_id, net, stop_event, search_budget):
     while not stop_event.is_set():
         use_model = False # (game_storage.size() > 10000) # first 10000 games are using vanilla MCTS
         game = chaturajienv.game()
+        game.dirichlet = True
         for j in range(10000):
             budget = search_budget #800 in AlphaZero
             while budget > 0:

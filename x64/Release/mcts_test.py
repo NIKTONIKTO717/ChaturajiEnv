@@ -1,0 +1,61 @@
+import chaturajienv
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import threading
+import random
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import multiprocessing
+import time
+import faulthandler
+import os
+import tools
+faulthandler.enable()
+
+def run_mcts_game(process_id, n_games, search_budget = 800):
+    tools.set_process(process_id, False)
+    start_time = time.time()
+    moves = 0
+    total_score = (0,0,0,0)
+    total_final_reward = [0.0, 0.0, 0.0, 0.0]
+    for game_index in range(n_games):
+        game = chaturajienv.game()
+        game.dirichlet = True
+        for j in range(10000):
+            budget = search_budget #800 in AlphaZero
+            while budget > 0:
+                sample = game.get_evaluate_sample(8, 0)
+                v = np.zeros(4)
+                p = np.ones(4096)
+                budget = game.give_evaluated_sample(p, v, budget)
+
+            if(game.step_stochastic(1.0)):
+                total_score = tuple(map(sum, zip(total_score, game.get(-1).get_score_default())))
+                total_final_reward = [sum(x) for x in zip(total_final_reward, game.final_reward)]
+                print('Game ', game_index, ' finished after ', j+1, ' moves')
+                print(game.get(-1).get_score_default())
+                moves += j+1
+                break
+
+        if(game_index % 10 == 0):
+            print('total score:', total_score)
+            print('total final reward:', total_final_reward)
+
+        game.save_game(f'mcts_games/game_{process_id}_{game_index}.bin')
+    print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / moves):.5g}')
+
+def main():
+    os.makedirs('mcts_games', exist_ok=True)
+    processes = []
+    for i in range(7):
+        p = multiprocessing.Process(target=run_mcts_game, args=(i, 100, 8000))
+        p.start()
+        processes.append(p)
+
+    for p in processes:
+        p.join()
+
+if __name__ == '__main__':
+    main()
