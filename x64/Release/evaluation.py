@@ -73,8 +73,8 @@ class Eval:
     def __init__(self, net_acting, net_training, num_processes, n_games):
         self.net_acting = net_acting
         self.net_training = net_training
-        self.net_acting_hash = hash(net_acting)
-        self.net_training_hash = hash(net_training)
+        self.net_acting_hash = tools.get_model_hash(net_acting)
+        self.net_training_hash = tools.get_model_hash(net_training)
         self.device_acting = next(self.net_acting.parameters()).device
         self.device_training = next(self.net_training.parameters()).device
         self.num_processes = num_processes

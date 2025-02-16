@@ -44,9 +44,6 @@ def run_mcts_game(process_id, net, stop_event, search_budget):
                 budget = game.give_evaluated_sample(p, v, budget)
 
             if(game.step_stochastic(1.0)):
-                #print('Game', f'{process_id}-{game_index}', 'finished after', j+1, 'moves')
-                #print(game.final_reward)
-                #print("time per move:", (time.time() - start_time) / (j+1))
                 game_index += 1
                 moves += j+1
                 break

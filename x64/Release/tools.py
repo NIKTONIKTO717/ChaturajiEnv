@@ -14,6 +14,7 @@ import faulthandler
 import psutil
 import os
 from network import AlphaZeroNet
+import hashlib
 faulthandler.enable()
 
 def set_process(process_id, info=False):
@@ -52,3 +53,15 @@ def rank_counts(data):
             rank_matrix[idx][rank] += 1
 
     return rank_matrix
+
+# generates hash based only on model parameters
+def get_model_hash(model, length=8):
+    hasher = hashlib.sha256()
+    for param in model.parameters():
+        hasher.update(param.detach().cpu().numpy().tobytes())
+
+    return hasher.hexdigest()[:length]
+
+def save_model(model):
+    os.makedirs('models', exist_ok=True)
+    torch.save(model.state_dict(), f'models/{get_model_hash(model)}.pth')

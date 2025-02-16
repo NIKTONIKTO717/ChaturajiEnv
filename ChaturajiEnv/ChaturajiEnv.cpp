@@ -761,23 +761,28 @@ void state::makeMove(move& m) {
         if (p._pawn.get(m.to.x, m.to.y)) {
             p._pawn.set(m.to.x, m.to.y, false);
             if (p.active) current.score += 1;
+            no_progress_count = 0;
         }
         else if (p._rook.get(m.to.x, m.to.y)) {
             p._rook.set(m.to.x, m.to.y, false);
             if (p.active) current.score += 5;
+            no_progress_count = 0;
         }
         else if (p._knight.get(m.to.x, m.to.y)) {
             p._knight.set(m.to.x, m.to.y, false);
             if (p.active) current.score += 3;
+            no_progress_count = 0;
         }
         else if (p._bishop.get(m.to.x, m.to.y)) {
             p._bishop.set(m.to.x, m.to.y, false);
             if (p.active) current.score += 3;
+            no_progress_count = 0;
         }
         else if (p._king.get(m.to.x, m.to.y)) {
             p._king.set(m.to.x, m.to.y, false);
             p.active = false;
             current.score += 10;
+            no_progress_count = 0;
         }
     }
     if (current._pawn.get(m.from.x, m.from.y)) {
@@ -937,7 +942,7 @@ py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int 
     // 4 planes representing players score
     // 4 planes prepresenting if player is active
     // 4 planes prepresenting one-hot eoncoded turn 
-    std::vector<float> flattened(1280 * T + 64 * 12, 0.0f); // 1 plane = 64, 4 planes 
+    std::vector<float> flattened(1280 * T + 64 * 13, 0.0f); // 1 plane = 64, 4 planes 
 
     int game_size = (int) states.size() - skip - 1;
 
@@ -966,14 +971,19 @@ py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int 
         }
     }
 
-    //active player plane
+    //player on turn one-hot planes
     for (int i = 0; i < 64; i++) {
         flattened[1280 * T + 512 + last_state.turn * 64 + i] = 1.0f;
     }
 
+    //active player planes
+    for (int i = 0; i < 64; i++) {
+        flattened[1280 * T + 768 + i] = (float) last_state.no_progress_count;
+    }
+
     // Return as a NumPy array
     return py::array_t<float>(
-        { 20 * T + 12, 8, 8 },     // Shape (5 channels for each player + describing last state, 8, 8)
+        { 20 * T + 13, 8, 8 },     // Shape (5 channels for each player + describing last state (4 score, 4 active, 4 turn, 1 no change count), 8, 8)
         { 8 * 8 * sizeof(float),   // Stride for c
          8 * sizeof(float),        // Stride for w
          sizeof(float) },          // Stride for h

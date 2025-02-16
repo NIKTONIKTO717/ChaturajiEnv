@@ -25,11 +25,11 @@ p.cpu_affinity([1])
 
 start = 0.0
 
-for g in range(10):
+for g in range(1000):
     game = chaturajienv.game()
     start_time = time.time()
     for j in range(10000):
-        budget = 800 #800 in AlphaZero
+        budget = 8000 #800 in AlphaZero
         while budget > 0:
             sample = game.get_evaluate_sample(8, 0)
 
@@ -44,8 +44,7 @@ for g in range(10):
             budget = game.give_evaluated_sample(p, v, budget)
             start+=time.time()-start_sample
 
-        if(game.get(j).turn == 0):
-            
+        if(game.get(j).turn <= 3):
             if(game.step_stochastic(1.0)):
                 print('Game ', g, ' finished after ', j+1, ' moves')
                 total_score = tuple(map(sum, zip(total_score, game.get(j+1).get_score_default())))
@@ -53,18 +52,16 @@ for g in range(10):
                 print("time per move:", (time.time() - start_time) / (j+1))
                 break
         else:
-            
             if(game.step_random()):
                 print('Game ', g, ' finished after ', j+1, ' moves')
-                #game.get(j+1).printBoard()
-                #print(game.get(j+1).getScoreDefault())
                 total_score = tuple(map(sum, zip(total_score, game.get(j+1).get_score_default())))
                 print(game.final_reward)
                 print("time per move:", (time.time() - start_time) / (j+1))
                 break
+    
     print('total score:', total_score)
-    game.save_game('game' + str(g) + '.json')
-    game_storage.load_game('game' + str(g) + '.json')
+    game.save_game('game_exploratory_' + str(g) + '.bin')
+    game_storage.load_game('game_exploratory_' + str(g) + '.bin')
 
 print('total time:', start)
 
