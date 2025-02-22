@@ -33,8 +33,6 @@ def main():
     # 20 * 8 + 4 + 4 + 4 + 1 = 173
     net_acting = AlphaZeroNet((173,8,8), 4096, 4, 16, 16).to(device_acting)
     net_training = AlphaZeroNet((173,8,8), 4096, 4, 16, 16).to(device_training)
-    print('String hash acting:', tools.get_model_hash(net_acting))
-    print('String hash training:', tools.get_model_hash(net_training))
     net_acting.eval()
     net_training.train()
     optimizer = optim.Adam(net_training.parameters(), lr=LEARNING_RATE, weight_decay=L2_REG)
@@ -50,6 +48,7 @@ def main():
     print('cache size:', mcts.cache_size())
     print('storage size:', mcts.size())
     mcts.stop()
+    mcts.use_model = True
     print('cache size:', mcts.cache_size())
     print('storage size:', mcts.size())
     mcts.start()
@@ -83,11 +82,23 @@ def main():
         #evaluate the network against random player
         evaluator = Eval(net_acting, net_training, CPU_CORES, 10)
         evaluator.run(BUDGET, (2, -1, -1, -1)) # acting_net vs random
+        evaluator.run(BUDGET, (-1, 2, -1, -1)) # acting_net vs random
+        evaluator.run(BUDGET, (-1, -1, 2, -1)) # acting_net vs random
+        evaluator.run(BUDGET, (-1, -1, -1, 2)) # acting_net vs random
         evaluator.run(BUDGET, (2, 0, 0, 0)) # acting_net vs vanilla MCTS
         evaluator.run(BUDGET, (2, 1, 1, 1)) # acting_net vs training_net
 
         #copy better network to acting network
-        net_acting.load_state_dict(net_training.state_dict()) #TODO: check if hash of network changes
+        print('Acting network hash:', tools.get_model_hash(net_acting))
+        print('Training network hash:', tools.get_model_hash(net_training))
+        torch.save(net_acting.state_dict(), f'net_{tools.get_model_hash(net_acting)}.pt')
+        print('Last acting network saved as:', f'net_{tools.get_model_hash(net_acting)}.pt')
+        net_acting.load_state_dict(net_training.state_dict())
+        print('Acting network hash:', tools.get_model_hash(net_acting))
+        print('Training network hash:', tools.get_model_hash(net_training))
+
+        mcts.start()
+    mcts.stop()
 
 
 if __name__ == '__main__':

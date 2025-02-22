@@ -17,15 +17,13 @@ import tools
 from network import AlphaZeroNet
 faulthandler.enable()
 
-def run_mcts_game(process_id, net, stop_event, search_budget):
+def run_mcts_game(process_id, net, stop_event, search_budget, use_model = False):
     tools.set_process(process_id, False)
     game_index = 0
     start_time = time.time()
     moves = 0
     while not stop_event.is_set():
-        use_model = False # (game_storage.size() > 10000) # first 10000 games are using vanilla MCTS
         game = chaturajienv.game()
-        game.dirichlet = True
         for j in range(10000):
             budget = search_budget #800 in AlphaZero
             while budget > 0:
@@ -50,10 +48,10 @@ def run_mcts_game(process_id, net, stop_event, search_budget):
                 break
 
         game.save_game(f'cache_games/game_{process_id}_{game_index}.bin')
-    print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / moves):.5g}')
+    print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / (moves + 1)):.5g}')
 
 class MCTS:
-    def __init__(self, net, device, storage_size = 100000, num_processes = 8, budget = 800):
+    def __init__(self, net, device, storage_size = 200000, num_processes = 8, budget = 800):
         #network related
         self.net = net # The shared network
         self.net.share_memory()
@@ -70,6 +68,7 @@ class MCTS:
         #mcts related
         self.budget = budget
         self.game_storage = chaturajienv.game_storage(storage_size)
+        self.use_model = False
 
     def process_cache(self):
         for file in os.listdir('cache_games'):
@@ -84,7 +83,7 @@ class MCTS:
         for i in range(self.num_processes):
             p = multiprocessing.Process(
                     target=run_mcts_game, 
-                    args=(i, self.net, self.stop_event, self.budget)
+                    args=(i, self.net, self.stop_event, self.budget, self.use_model)
                 )
             p.start()
             self.processes.append(p)

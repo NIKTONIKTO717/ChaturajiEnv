@@ -23,27 +23,26 @@ faulthandler.enable()
 #player = 2 -> training_net MCTS deterministic policy (competitive play)
 def play_game(process_id, net_acting, net_training, directory, n_games, search_budget = 800, players = (0,0,0,0)):
     tools.set_process(process_id)
-    game_index = 0
-    start_time = time.time()
-    #moves_sum = 0
-    #score_sum = (0,0,0,0)
-    #rewards = []
     for p in range(4):
         if players[p] not in [-1, 0, 1, 2]:
             raise ValueError('Invalid player value')
-    for _ in range(n_games):
-        game = chaturajienv.game()
+    for game_index in range(n_games):
+        games = [] # every player has own game instance, so they don't use same MCTS tree
+        for _ in range(4):
+            games.append(chaturajienv.game())
+        turn = 0
         for j in range(10000):
+            game = games[turn]
             budget = search_budget #800 in AlphaZero
             while budget > 0:
                 sample = game.get_evaluate_sample(8, 0)
                 sample = torch.from_numpy(sample).unsqueeze(0)
                 # for random and vanilla MCTS is used vanilla MCTS estimation
-                if players[game.get(j).turn] == -1 or players[game.get(j).turn] == 0: #TODO: change to local turn...
+                if players[turn] == -1 or players[turn] == 0:
                     p = np.ones(4096)
                     v = np.zeros(4)
                 else:
-                    if players[game.get(j).turn] == 1:
+                    if players[turn] == 1:
                         with torch.no_grad():
                             p, v = net_acting(sample)
                     else: #defaultly also for 
@@ -54,18 +53,20 @@ def play_game(process_id, net_acting, net_training, directory, n_games, search_b
 
                 budget = game.give_evaluated_sample(p, v, budget)
 
-            if players[game.get(j).turn] == -1:
+            if players[turn] == -1:
                 if game.step_random():
+                    game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
                     break
             else:
                 if game.step_deterministic():
+                    game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
                     break
-
-        #moves_sum += game.size()
-        #score_sum = tuple(map(sum, zip(score_sum, game.get(j+1).get_score_default())))
-        #rewards.append(game.final_reward)
-        game_index += 1
-        game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
+            last_action = game.get_action(-1)
+            for i in range(4):
+                if i != turn:
+                    games[i].step(last_action)
+            turn = game.get(-1).turn
+        
 
 class Eval:
     #acting -> previous network (device = cpu)
@@ -89,6 +90,8 @@ class Eval:
             moves_sum += game.size()
             score_sum = tuple(map(sum, zip(score_sum, game.get(-1).get_score_default())))
             rewards.append(game.final_reward)
+        for file in os.listdir(f'{directory}'):
+            os.remove(f'{directory}/{file}')
         return moves_sum, score_sum, rewards
 
     def run(self, search_budget = 800, players = (0,0,0,0)):

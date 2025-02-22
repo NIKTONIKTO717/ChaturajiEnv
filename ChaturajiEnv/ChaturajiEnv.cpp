@@ -1117,6 +1117,7 @@ struct game {
     std::array<float, 4> final_reward = { 0.0f, 0.0f, 0.0f, 0.0f };
     std::deque<move> mcts_trajectory;
     bool dirichlet = false;
+    bool evaluation_game = false;
 
     int size() {
         return (int) states.size();
@@ -1127,6 +1128,13 @@ struct game {
             return states[n];
         else 
             return states[states.size() + n];
+    }
+
+    move get_action(int n) {
+        if (n >= 0)
+            return game_trajectory[n];
+        else
+            return game_trajectory[states.size() + n];
     }
 
     void add_state(state new_state) {
@@ -1270,6 +1278,23 @@ struct game {
         return budget;
     }
 
+    bool step(move action) {
+        states.push_back(root->current_state);
+        game_trajectory.push_back(action);
+        mcts_trajectory.clear();
+        current_search_position = root;
+
+        root->parent = nullptr;
+        if (root->is_terminal) {
+            auto& values = root->value;
+            auto turn = root->current_state.turn;
+            finished = true;
+            final_reward = { values[(4 - turn) % 4] , values[(5 - turn) % 4] , values[(6 - turn) % 4] , values[(7 - turn) % 4] };
+            return true;
+        }
+        return false;
+    }
+
     bool make_step(std::array<float, 4096> policy) {
         std::uniform_real_distribution<double> dist(0.0, 1.0);
 
@@ -1286,22 +1311,9 @@ struct game {
             }
         }
 
-        states.push_back(root->current_state);
-        game_trajectory.push_back(action);
-        probabilities.push_back(std::move(policy));
-        mcts_trajectory.clear();
-        current_search_position = root;
-
-        root->parent = nullptr;
-        if (root->is_terminal) {
-            auto& values = root->value;
-            auto turn = root->current_state.turn;
-            //current_turn = 0 - game starts with turn == 0
-            finished = true;
-            final_reward = { values[(4 - turn) % 4] , values[(5 - turn) % 4] , values[(6 - turn) % 4] , values[(7 - turn) % 4] };
-            return true;
-        }
-        return false;
+        if (!evaluation_game) //not needed when only evaluating
+            probabilities.push_back(std::move(policy));
+        return step(action);
     }
 
     // Perform a deterministic step by choosing the action with the highest N
@@ -1318,6 +1330,9 @@ struct game {
                 best_n = it->second;
             }
         }
+
+        if (evaluation_game) //we don't need to store a policy
+            return step(best_a);
 
         std::array<float, 4096> policy = { 0.0f };
         policy[best_a.getIndex()] = 1.0f;
@@ -1359,25 +1374,8 @@ struct game {
         if(index_last < 0) throw std::out_of_range("get_sample(): skip argument out of bounds");
         auto& values = root->value;
         auto& turn = root->current_state.turn;
-        /*std::cout << "ROOT \n ----\n";
-        std::cout << "Root value: " << values[0] << ',' << values[1] << ',' << values[2] << ',' << values[3] << std::endl;
-        std::cout << "Root turn: " << root->current_state.turn << std::endl;
-        std::cout << "Root "; root->current_state.printScore();
-        std::cout << "Root final reward: " << final_reward[0] << "," << final_reward[1] << "," << final_reward[2] << "," << final_reward[3] << "\n";
-        std::cout << "----\nROOT END\n";*/
         auto last_turn = states[index_last].turn;
         std::array<float, 4> value = { final_reward[(4 + last_turn) % 4], final_reward[(5 + last_turn) % 4], final_reward[(6 + last_turn) % 4], final_reward[(7 + last_turn) % 4] };
-        /*states[index_last].printBoard();
-        states[index_last].printScore();
-        std::cout << "Last state value: " << value[0] << ',' << value[1] << ',' << value[2] << ',' << value[3] << std::endl;
-        std::cout << "Last state turn: " << states[index_last].turn << std::endl;
-        for (int i = 0; i <= index_last; i++) {
-            states[i].printBoard();
-            states[i].printScore();
-            std::cout << "Local value: " << values[(4 - states[i].turn) % 4] << ',' << values[(5 - states[i].turn) % 4] << ',' << values[(6 - states[i].turn) % 4] << ',' << values[(7 - states[i].turn) % 4] << std::endl;
-            std::cout << "---" << std::endl;
-        }*/
-
         return { 
             states_to_numpy(states, T, skip + 1),  //(+1) We don't want sample where last state is terminated
             py::array_t<float>(4096, probabilities[index_last].data()),
@@ -1404,6 +1402,7 @@ struct game {
         ar& final_reward;
         ar& mcts_trajectory;
         ar& dirichlet;
+        ar& evaluation_game;
     }
 
     void save_game(const std::string& filename) {
@@ -1412,6 +1411,7 @@ struct game {
         oa << *this;
         ofs.close();
     }
+
 };
 
 game load_game(const std::string& filename) {
@@ -1514,6 +1514,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def_readwrite("dirichlet", &game::dirichlet)
         .def("size", &game::size)
         .def("get", &game::get)
+        .def("get_action", &game::get_action)
         .def_readonly("final_reward", &game::final_reward)
         .def("add_state", &game::add_state)
         .def("get_evaluate_sample", &game::get_evaluate_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
@@ -1522,6 +1523,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("step_deterministic", &game::step_deterministic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_stochastic", &game::step_stochastic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_random", &game::step_random, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("step", &game::step, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("to_numpy", &game::to_numpy)
         .def("get_sample", &game::get_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("get_random_sample", &game::get_random_sample)
