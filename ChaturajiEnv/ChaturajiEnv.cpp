@@ -1068,11 +1068,22 @@ struct MCTSNode {
             current_state.printLegalMoves();
             current_state.printBoard();
             std::cout << "---" << std::endl;
+            for (auto& move : moves) {
+                std::cout << move << " P: " << P_ptr[move.getIndex()] << std::endl;
+            }
+            float p_total_sum = 0.0f;
+            for (size_t i = 0; i < 4096; i++ ) {
+                p_total_sum+= P_ptr[i];
+                if (P_ptr[i] < -0.01 || P_ptr[i] > 0.01) {
+                    std::cout << "P != 0, move: " << i << " P: " << P_ptr[i] << std::endl;
+                }
+            }
+            std::cout << "Total P sum : " << p_total_sum << std::endl;
             throw std::runtime_error("expand(): No legal move.");
         }
-        for (auto& [move, p] : P) {
+        /*for (auto& [move, p] : P) {
                 p /= p_sum;
-        }
+        }*/
         //normalizing, adding dirichlet
         if (add_dirichlet) {
             std::gamma_distribution<float> gamma_dist(0.03f , 1.0f); //alpha = 0.03 in AlphaZero
@@ -1134,7 +1145,7 @@ struct game {
         if (n >= 0)
             return game_trajectory[n];
         else
-            return game_trajectory[states.size() + n];
+            return game_trajectory[game_trajectory.size() + n];
     }
 
     void add_state(state new_state) {
@@ -1278,12 +1289,13 @@ struct game {
         return budget;
     }
 
-    bool step(move action) {
+    bool step(move& action) {
         states.push_back(root->current_state);
         game_trajectory.push_back(action);
         mcts_trajectory.clear();
         current_search_position = root;
 
+        root = root->children[action];
         root->parent = nullptr;
         if (root->is_terminal) {
             auto& values = root->value;
@@ -1306,13 +1318,24 @@ struct game {
             cumulative_sum += policy[it->first.getIndex()];
             if (cumulative_sum >= target) {
                 action = it->first;
-                root = root->children[it->first];
                 break;
             }
         }
+        std::cout << "Stochastic: " << action << std::endl;
 
         if (!evaluation_game) //not needed when only evaluating
             probabilities.push_back(std::move(policy));
+        return step(action);
+    }
+
+    bool step_given(move action) {
+        if (root->is_terminal) //if terminal, do nothing
+            return true;
+        if (!root->current_state.isLegalMove(action)) { //check if move is valid
+            throw std::runtime_error("step_given(): Given move isn't legal.");
+        }
+        std::cout << "Given: " << action << std::endl;
+
         return step(action);
     }
 
@@ -1330,6 +1353,7 @@ struct game {
                 best_n = it->second;
             }
         }
+        std::cout << "Deterministic: " << best_a << std::endl;
 
         if (evaluation_game) //we don't need to store a policy
             return step(best_a);
@@ -1344,6 +1368,13 @@ struct game {
         if (root->is_terminal) //if terminal, do nothing
             return true;
 
+        /*std::cout << "Possible moves:" << std::endl;
+
+        root->current_state.printBoard();
+        for (auto& m : root->current_state.getLegalMoves()) {
+            std::cout << m << " value: (" << (root->W[m][0]) / (root->N[m]) << ", " << (root->W[m][1]) / (root->N[m]) << ", " << (root->W[m][2]) / (root->N[m]) << ", " << (root->W[m][3]) / (root->N[m]) << ")" << std::endl;
+        }*/
+
         std::array<float, 4096> policy = { 0.0f };
         float N_pow_total = 0.0f;
 
@@ -1357,10 +1388,18 @@ struct game {
         }
 
         return make_step(std::move(policy));
+
+        /*std::cout << "After step moves:" << std::endl;
+
+        root->current_state.printBoard();
+        for (auto& m : root->current_state.getLegalMoves()) {
+            std::cout << m << " value: (" << (root->W[m][0]) / (root->N[m]) << ", " << (root->W[m][1]) / (root->N[m]) << ", " << (root->W[m][2]) / (root->N[m]) << ", " << (root->W[m][3]) / (root->N[m]) << ")" << std::endl;
+        }*/
     }
 
     // Perform a random step
     bool step_random() {
+        std::cout << "Random ";
         return step_stochastic(0.0f); 
     }
     
@@ -1523,7 +1562,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("step_deterministic", &game::step_deterministic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_stochastic", &game::step_stochastic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_random", &game::step_random, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
-        .def("step", &game::step, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("step_given", &game::step_given, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("to_numpy", &game::to_numpy)
         .def("get_sample", &game::get_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("get_random_sample", &game::get_random_sample)
