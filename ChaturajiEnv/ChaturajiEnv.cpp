@@ -427,7 +427,7 @@ struct state {
 
     void printBoard();
 
-    void printScore();
+    void printScore() const;
 
     void printTurn();
 
@@ -440,8 +440,7 @@ struct state {
         }
         turn = RED;
         finished = false;
-        std::string info = "Reset info";
-        return { state(), info };
+        return { state(), "" };
     }
 
     move sample() {
@@ -452,8 +451,7 @@ struct state {
     //observation (new state), reward, terminated, truncated, info
     std::tuple<state, uint, bool, bool, std::string> step(move& m) {
         makeMove(m);
-        std::string info = "Step info";
-        return { *this, m.reward, finished, false, info };
+        return { *this, m.reward, finished, false, "" };
     }
 
     
@@ -462,9 +460,10 @@ struct state {
     }
     
 
-    //returns reward at the end of the game
+    //returns reward at the end of the game, indexed from player on turn
     std::array<float, 4> getFinalReward() const {
         // (+1 for 1st player, +0.33 for 2nd, -0.33 for 3rd and -1 for 4th)
+
         std::vector<float> rank_rewards = { 1.0f, 0.33f, -0.33f, -1.0f };
 
         std::vector<std::pair<uint, int>> scores; // {score, player_index}
@@ -489,6 +488,7 @@ struct state {
             }
             i = j;
         }
+
         return { rewards[0], rewards[1], rewards[2], rewards[3] };
     }
 
@@ -914,7 +914,7 @@ std::string getColor(uint color) {
     }
 };
 
-void state::printScore() {
+void state::printScore() const {
     // Print the score
     std::cout << "Score:\n";
     for (uint i = 0; i < 4; i++) {
@@ -1052,11 +1052,12 @@ struct MCTSNode {
                 //state_copy.step(move);
                 //children.emplace(move, std::make_shared<MCTSNode>(std::move(state_copy), this));
                 children.emplace(move, std::make_shared<MCTSNode>(current_state, this));
-                children[move]->current_state.step(move);
+                auto& next_node = children[move];
+                next_node->current_state.step(move);
                 //std::cout << "Setting: " << move << ", Value: " << children[move] << "\n";
-                if (children[move]->current_state.finished) {
-                    children[move]->is_terminal = true;
-                    children[move]->value = children[move]->current_state.getFinalReward();
+                if (next_node->current_state.finished) {
+                    next_node->is_terminal = true;
+                    next_node->value = next_node->current_state.getFinalReward();
                 }
             }
             N[move] = 0;
@@ -1290,13 +1291,13 @@ struct game {
     }
 
     bool step(move& action) {
-        states.push_back(root->current_state);
         game_trajectory.push_back(action);
         mcts_trajectory.clear();
         current_search_position = root;
 
         root = root->children[action];
         root->parent = nullptr;
+        states.push_back(root->current_state);
         if (root->is_terminal) {
             auto& values = root->value;
             auto turn = root->current_state.turn;
@@ -1321,7 +1322,6 @@ struct game {
                 break;
             }
         }
-        std::cout << "Stochastic: " << action << std::endl;
 
         if (!evaluation_game) //not needed when only evaluating
             probabilities.push_back(std::move(policy));
@@ -1334,7 +1334,6 @@ struct game {
         if (!root->current_state.isLegalMove(action)) { //check if move is valid
             throw std::runtime_error("step_given(): Given move isn't legal.");
         }
-        std::cout << "Given: " << action << std::endl;
 
         return step(action);
     }
@@ -1353,7 +1352,6 @@ struct game {
                 best_n = it->second;
             }
         }
-        std::cout << "Deterministic: " << best_a << std::endl;
 
         if (evaluation_game) //we don't need to store a policy
             return step(best_a);
@@ -1399,7 +1397,6 @@ struct game {
 
     // Perform a random step
     bool step_random() {
-        std::cout << "Random ";
         return step_stochastic(0.0f); 
     }
     
