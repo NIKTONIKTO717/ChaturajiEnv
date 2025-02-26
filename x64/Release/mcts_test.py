@@ -26,7 +26,6 @@ def run_mcts_game(process_id, n_games, search_budget = 800):
     total_final_reward = [0.0, 0.0, 0.0, 0.0]
     for game_index in range(n_games):
         game = chaturajienv.game()
-        game.dirichlet = True
         for j in range(10000):
             budget = search_budget #800 in AlphaZero
             while budget > 0:
