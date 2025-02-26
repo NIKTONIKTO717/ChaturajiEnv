@@ -1067,8 +1067,13 @@ struct MCTSNode {
             P[move] = P_ptr[move.getIndex()];
             p_sum += P[move];
         }
-        if (p_sum == 0) { 
-            current_state.printLegalMoves();
+        //can happen in early stages of training, set uniform probability
+        if (p_sum == 0) {
+            for (auto& [move, p] : P) {
+                p = 1.0f;
+                p_sum++;
+            }
+            /*current_state.printLegalMoves();
             current_state.printBoard();
             std::cout << "---" << std::endl;
             for (auto& move : moves) {
@@ -1082,12 +1087,7 @@ struct MCTSNode {
                 }
             }
             std::cout << "Total P sum : " << p_total_sum << std::endl;
-            throw std::runtime_error("expand(): No legal move.");
-        }
-        //needed for vanilla MCTS
-        if(p_sum < 0.999 || p_sum > 1.001)
-        for (auto& [move, p] : P) {
-                p /= p_sum;
+            throw std::runtime_error("expand(): No legal move.");*/
         }
         //normalizing, adding dirichlet
         if (add_dirichlet) {
@@ -1102,7 +1102,12 @@ struct MCTSNode {
             //add noise
             size_t index = 0;
             for (auto& [move, p] : P) {
-                p = 0.75f * p + (0.25f * dirichlet_noise[index++] / dir_sum);
+                p = 0.75f * p / p_sum  + (0.25f * dirichlet_noise[index++] / dir_sum);
+            }
+        }
+        else {
+            for (auto& [move, p] : P) {
+                p /= p_sum;
             }
         }
     }
