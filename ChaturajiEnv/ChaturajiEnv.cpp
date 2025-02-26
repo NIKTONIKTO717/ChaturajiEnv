@@ -827,6 +827,8 @@ std::vector<move> state::getLegalMoves() {
             std::move(moves.begin(), moves.end(), std::back_inserter(legalMoves));
         }
     }
+    // if more moves has same value, ensures not always first move is picked.
+    std::shuffle(std::begin(legalMoves), std::end(legalMoves), global_rng());
     return legalMoves;
 };
 
@@ -1082,9 +1084,11 @@ struct MCTSNode {
             std::cout << "Total P sum : " << p_total_sum << std::endl;
             throw std::runtime_error("expand(): No legal move.");
         }
-        /*for (auto& [move, p] : P) {
+        //needed for vanilla MCTS
+        if(p_sum < 0.999 || p_sum > 1.001)
+        for (auto& [move, p] : P) {
                 p /= p_sum;
-        }*/
+        }
         //normalizing, adding dirichlet
         if (add_dirichlet) {
             std::gamma_distribution<float> gamma_dist(0.03f , 1.0f); //alpha = 0.03 in AlphaZero
@@ -1128,11 +1132,15 @@ struct game {
     bool finished = false;
     std::array<float, 4> final_reward = { 0.0f, 0.0f, 0.0f, 0.0f };
     std::deque<move> mcts_trajectory;
-    bool dirichlet = false;
+    bool dirichlet = true;
     bool evaluation_game = false;
 
     int size() {
         return (int) states.size();
+    }
+
+    uint turn() {
+        return root->current_state.turn;
     }
 
     state get(int n) {
@@ -1235,7 +1243,7 @@ struct game {
 
         auto* node = current_search_position.get();
         node->value = { V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3] };
-        node->expand(P_ptr, current_search_position == root); //adds dirichlet if at root 
+        node->expand(P_ptr, current_search_position == root && dirichlet); //adds dirichlet if at root 
         node->is_leaf = false;
 
         int leaf_turn = node->current_state.turn;
@@ -1293,10 +1301,10 @@ struct game {
     bool step(move& action) {
         game_trajectory.push_back(action);
         mcts_trajectory.clear();
-        current_search_position = root;
 
         root = root->children[action];
         root->parent = nullptr;
+        current_search_position = root;
         states.push_back(root->current_state);
         if (root->is_terminal) {
             auto& values = root->value;
@@ -1346,6 +1354,13 @@ struct game {
         move best_a;
         int best_n = -std::numeric_limits<int>::infinity();
 
+        std::cout << "Possible moves:" << std::endl;
+
+        root->current_state.printBoard();
+        for (auto& m : root->current_state.getLegalMoves()) {
+            std::cout << m << ", N: " << root->N[m] <<", P:" << root->P[m] << ", value: (" << (root->W[m][0]) / (root->N[m]) << ", " << (root->W[m][1]) / (root->N[m]) << ", " << (root->W[m][2]) / (root->N[m]) << ", " << (root->W[m][3]) / (root->N[m]) << ")" << std::endl;
+        }
+
         for (auto it = root->N.begin(); it != root->N.end(); ++it) {
             if (it->second > best_n) {
                 best_a = it->first;
@@ -1356,12 +1371,14 @@ struct game {
         if (evaluation_game) //we don't need to store a policy
             return step(best_a);
 
+        std::cout << "Choosen action: " << best_a << std::endl;
+
         std::array<float, 4096> policy = { 0.0f };
         policy[best_a.getIndex()] = 1.0f;
         return make_step(std::move(policy));
     }
 
-    // Perform a stochastic step based on policy (pi ~ N^(1/temp))
+    // Perform a stochastic step based on policy (pi ~ N^(temp))
     bool step_stochastic(double temperature = 1.0) {
         if (root->is_terminal) //if terminal, do nothing
             return true;
@@ -1550,6 +1567,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def_readwrite("dirichlet", &game::dirichlet)
         .def("size", &game::size)
         .def("get", &game::get)
+        .def("turn", &game::turn)
         .def("get_action", &game::get_action)
         .def_readonly("final_reward", &game::final_reward)
         .def("add_state", &game::add_state)
