@@ -1137,7 +1137,6 @@ struct game {
     bool finished = false;
     std::array<float, 4> final_reward = { 0.0f, 0.0f, 0.0f, 0.0f };
     std::deque<move> mcts_trajectory;
-    bool dirichlet = true;
     bool evaluation_game = false;
 
     int size() {
@@ -1248,7 +1247,7 @@ struct game {
 
         auto* node = current_search_position.get();
         node->value = { V_ptr[0], V_ptr[1], V_ptr[2], V_ptr[3] };
-        node->expand(P_ptr, current_search_position == root && dirichlet); //adds dirichlet if at root 
+        node->expand(P_ptr, current_search_position == root && !evaluation_game); //adds dirichlet if at root 
         node->is_leaf = false;
 
         int leaf_turn = node->current_state.turn;
@@ -1359,12 +1358,12 @@ struct game {
         move best_a;
         int best_n = -std::numeric_limits<int>::infinity();
 
-        std::cout << "Possible moves:" << std::endl;
+        /*std::cout << "Possible moves:" << std::endl;
 
         root->current_state.printBoard();
         for (auto& m : root->current_state.getLegalMoves()) {
             std::cout << m << ", N: " << root->N[m] <<", P:" << root->P[m] << ", value: (" << (root->W[m][0]) / (root->N[m]) << ", " << (root->W[m][1]) / (root->N[m]) << ", " << (root->W[m][2]) / (root->N[m]) << ", " << (root->W[m][3]) / (root->N[m]) << ")" << std::endl;
-        }
+        }*/
 
         for (auto it = root->N.begin(); it != root->N.end(); ++it) {
             if (it->second > best_n) {
@@ -1376,7 +1375,7 @@ struct game {
         if (evaluation_game) //we don't need to store a policy
             return step(best_a);
 
-        std::cout << "Choosen action: " << best_a << std::endl;
+        //std::cout << "Choosen action: " << best_a << std::endl;
 
         std::array<float, 4096> policy = { 0.0f };
         policy[best_a.getIndex()] = 1.0f;
@@ -1459,7 +1458,6 @@ struct game {
         ar& finished;
         ar& final_reward;
         ar& mcts_trajectory;
-        ar& dirichlet;
         ar& evaluation_game;
     }
 
@@ -1569,7 +1567,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("get_score_default", &state::get_score_default);
     py::class_<game>(m, "game")
         .def(pybind11::init<>())
-        .def_readwrite("dirichlet", &game::dirichlet)
+        .def_readwrite("evaluation_game", &game::evaluation_game)
         .def("size", &game::size)
         .def("get", &game::get)
         .def("turn", &game::turn)
