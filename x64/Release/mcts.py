@@ -7,17 +7,17 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-#import torch.multiprocessing as multiprocessing
 import torch.multiprocessing as multiprocessing
 import time
 import faulthandler
 import psutil
 import os
 import tools
+import pybind11
 from network import AlphaZeroNet
 faulthandler.enable()
 
-def run_mcts_game(process_id, net, stop_event, search_budget, use_model = False):
+def run_mcts_game(process_id, net, stop_event, search_budget, use_model):
     tools.set_process(process_id, False)
     game_index = 0
     start_time = time.time()
@@ -32,13 +32,11 @@ def run_mcts_game(process_id, net, stop_event, search_budget, use_model = False)
                 if use_model:
                     with torch.no_grad():
                         p, v = net(sample)
-                    p = p.squeeze(0).cpu().numpy()
-                    v = v.squeeze(0).cpu().numpy()     
+                    p = p.squeeze(0).numpy()
+                    v = v.squeeze(0).numpy()     
                 else:
                     p = np.random.rand(4096)
                     v = np.random.rand(4)
-                #p = np.exp(p)/np.sum(np.exp(p))
-                #p = torch.nn.functional.softmax(p, dim=1)
 
                 budget = game.give_evaluated_sample(p, v, budget)
 
@@ -51,12 +49,9 @@ def run_mcts_game(process_id, net, stop_event, search_budget, use_model = False)
     print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / (moves + 1)):.5g}')
 
 class MCTS:
-    def __init__(self, net, device, storage_size = 200000, num_processes = 8, budget = 800):
+    def __init__(self, net, storage_size = 200000, num_processes = 7, budget = 800):
         #network related
         self.net = net # The shared network
-        self.net.share_memory()
-        self.net.eval()
-        self.device = device # The device to run the network on
 
         #processes related
         multiprocessing.set_start_method('spawn', force=True)
@@ -69,6 +64,14 @@ class MCTS:
         self.budget = budget
         self.game_storage = chaturajienv.game_storage(storage_size)
         self.use_model = False
+        
+        #performance related
+        p = psutil.Process(os.getpid())
+        p.cpu_affinity([self.num_processes, self.num_processes + 1]) #next 2 cores after last process core
+
+    def process_samples(self, directory):
+        for file in os.listdir(directory):
+            self.game_storage.load_game(f'{directory}/{file}')
 
     def process_cache(self):
         for file in os.listdir('cache_games'):
@@ -80,11 +83,16 @@ class MCTS:
         self.process_cache()
         self.processes = []
         self.stop_event.clear()
+        #set network to eval mode
+        self.net.share_memory()
+        self.net.eval()
+
+        print('MCTS Acting network hash:', tools.get_model_hash(self.net))
         for i in range(self.num_processes):
             p = multiprocessing.Process(
                     target=run_mcts_game, 
                     args=(i, self.net, self.stop_event, self.budget, self.use_model)
-                )
+            )
             p.start()
             self.processes.append(p)
 

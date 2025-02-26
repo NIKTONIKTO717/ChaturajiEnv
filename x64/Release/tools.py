@@ -64,4 +64,4 @@ def get_model_hash(model, length=8):
 
 def save_model(model):
     os.makedirs('models', exist_ok=True)
-    torch.save(model.state_dict(), f'models/{get_model_hash(model)}.pth')
+    torch.save(model.state_dict(), f'models/{get_model_hash(model)}.pickle')

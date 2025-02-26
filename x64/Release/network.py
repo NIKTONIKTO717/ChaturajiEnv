@@ -110,6 +110,7 @@ class AlphaZeroNet(nn.Module):
             nn.ReLU(),
             nn.Flatten(),
             nn.Linear(2 * h * w, num_actions),
+            nn.Softmax(dim=1),  # Ensures valid probability distribution
         )
 
         self.value_head = nn.Sequential(

@@ -7,8 +7,7 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
-#import torch.multiprocessing as multiprocessing
-import multiprocessing
+import torch.multiprocessing as multiprocessing
 import time
 import faulthandler
 import psutil
@@ -30,42 +29,47 @@ def play_game(process_id, net_acting, net_training, directory, n_games, search_b
         games = [] # every player has own game instance, so they don't use same MCTS tree
         for _ in range(4):
             games.append(chaturajienv.game())
+            games[-1].evaluation_game = True
         turn = 0
-        for j in range(10000):
+        for _ in range(10000):
+            for p in range(4): #each player has same budget for estimation
+                game = games[p]
+                budget = search_budget #800 in AlphaZero
+                while budget > 0:
+                    sample = game.get_evaluate_sample(8, 0)
+                    sample = torch.from_numpy(sample).unsqueeze(0)
+                    # for random and vanilla MCTS is used vanilla MCTS estimation
+                    if players[p] == -1 or players[p] == 0:
+                        p_out = np.ones(4096)
+                        v_out = np.zeros(4)
+                    else:
+                        if players[p] == 1:
+                            with torch.no_grad():
+                                p_net, v_net = net_acting(sample)
+                        else:
+                            with torch.no_grad():
+                                p_net, v_net = net_training(sample)
+                        p_out = p_net.squeeze(0).numpy()
+                        v_out = v_net.squeeze(0).numpy()
+                    budget = game.give_evaluated_sample(p_out, v_out, budget)
+
             game = games[turn]
-            budget = search_budget #800 in AlphaZero
-            while budget > 0:
-                sample = game.get_evaluate_sample(8, 0)
-                sample = torch.from_numpy(sample).unsqueeze(0)
-                # for random and vanilla MCTS is used vanilla MCTS estimation
-                if players[turn] == -1 or players[turn] == 0:
-                    p = np.ones(4096)
-                    v = np.zeros(4)
-                else:
-                    if players[turn] == 1:
-                        with torch.no_grad():
-                            p, v = net_acting(sample)
-                    else: #defaultly also for 
-                        with torch.no_grad():
-                            p, v = net_training(sample)
-                    p = p.squeeze(0).cpu().numpy()
-                    v = v.squeeze(0).cpu().numpy()
 
-                budget = game.give_evaluated_sample(p, v, budget)
-
+            terminaleted = False
             if players[turn] == -1:
-                if game.step_random():
-                    game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
-                    break
+                terminaleted = game.step_random()
             else:
-                if game.step_deterministic():
-                    game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
-                    break
-            last_action = game.get_action(-1)
-            for i in range(4):
-                if i != turn:
-                    games[i].step(last_action)
-            turn = game.get(-1).turn
+                terminaleted = game.step_deterministic()
+
+            if terminaleted:
+                game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
+                break
+            else:
+                last_action = game.get_action(-1)
+                for i in range(4):
+                    if i != turn:
+                        games[i].step_given(last_action)
+                turn = game.get(-1).turn
         
 
 class Eval:
@@ -90,14 +94,18 @@ class Eval:
             moves_sum += game.size()
             score_sum = tuple(map(sum, zip(score_sum, game.get(-1).get_score_default())))
             rewards.append(game.final_reward)
+        #zip directory, archive has smaller size than directory
+        os.system(f'zip -r {directory}.zip {directory} > {os.devnull} 2>&1')
         for file in os.listdir(f'{directory}'):
             os.remove(f'{directory}/{file}')
+        os.rmdir(directory)
         return moves_sum, score_sum, rewards
 
     def run(self, search_budget = 800, players = (0,0,0,0)):
         directory = tools.directory_name(self.net_acting_hash, self.net_training_hash, search_budget, players)
         os.makedirs(directory, exist_ok=True)
         self.net_training.to(self.device_acting)
+        self.net_training.share_memory()
         self.net_training.eval()
         processes = []
         for i in range(self.num_processes):
@@ -106,7 +114,7 @@ class Eval:
                     args=(
                         i, 
                         self.net_acting, 
-                        self.net_training, 
+                        self.net_training,
                         directory,
                         self.n_games, 
                         search_budget, 

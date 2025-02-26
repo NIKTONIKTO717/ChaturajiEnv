@@ -12,7 +12,11 @@ import time
 import faulthandler
 import os
 import tools
+import string
 faulthandler.enable()
+
+def random_filename(n = 10):
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=n))
 
 def run_mcts_game(process_id, n_games, search_budget = 800):
     tools.set_process(process_id, False)
@@ -26,7 +30,8 @@ def run_mcts_game(process_id, n_games, search_budget = 800):
         for j in range(10000):
             budget = search_budget #800 in AlphaZero
             while budget > 0:
-                sample = game.get_evaluate_sample(8, 0)
+                 # not necessary to use (8, 0)
+                sample = game.get_evaluate_sample(1, 0)
                 v = np.zeros(4)
                 p = np.ones(4096)
                 budget = game.give_evaluated_sample(p, v, budget)
@@ -43,14 +48,15 @@ def run_mcts_game(process_id, n_games, search_budget = 800):
             print('total score:', total_score)
             print('total final reward:', total_final_reward)
 
-        game.save_game(f'mcts_games/game_{process_id}_{game_index}.bin')
+        game.save_game(f'mcts_games/{random_filename()}.bin')
     print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / moves):.5g}')
 
 def main():
     os.makedirs('mcts_games', exist_ok=True)
     processes = []
-    for i in range(7):
-        p = multiprocessing.Process(target=run_mcts_game, args=(i, 100, 8000))
+    for i in [1,2,4,5,7,8,9,10]: # optimization for specific CPU best performing cores
+        #2 virtual CPU are used for one physical CPU core, we use only physical CPU per process
+        p = multiprocessing.Process(target=run_mcts_game, args=(2*i, 100, 80000))
         p.start()
         processes.append(p)
 
