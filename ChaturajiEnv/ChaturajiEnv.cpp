@@ -57,14 +57,19 @@ std::mt19937& global_rng() {
     return gen;
 }
 
-template <typename T>
-std::vector<T> get_last_t_with_skip(const std::vector<T>& vec, size_t t, size_t n_skip) {
-    size_t start = std::max(0, static_cast<int>(vec.size()) - static_cast<int>(t + n_skip));
-    size_t end = std::max(0, static_cast<int>(vec.size()) - static_cast<int>(n_skip));
+constexpr const char* notation_x[4][8] = {
+    { "d", "e", "f", "g", "h", "i", "j", "k" },    // red
+    { "11", "10", "9", "8", "7", "6", "5", "4" },  // blue
+    { "k", "j", "i", "h", "g", "f", "e", "d" },    // yellow
+    { "4", "5", "6", "7", "8", "9", "10", "11" }   // green
+};
 
-    std::vector<T> result(vec.begin() + start, vec.begin() + end);
-    return result;
-}
+constexpr const char* notation_y[4][8] = {
+    { "4", "5", "6", "7", "8", "9", "10", "11" },   // red
+    { "d", "e", "f", "g", "h", "i", "j", "k" },    // blue
+    { "11", "10", "9", "8", "7", "6", "5", "4" },  // yellow
+    { "k", "j", "i", "h", "g", "f", "e", "d" },    // green
+};
 
 // Named constants for colors
 constexpr uint RED = 0;
@@ -1468,6 +1473,30 @@ struct game {
         ofs.close();
     }
 
+    std::string get_chess_com_representation() {
+        std::string repr_str;
+        uint turn = 4;
+        uint row = 0;
+        for (size_t i = 0; i < game_trajectory.size(); i++) {
+            auto& s = states[i];
+            auto& m = game_trajectory[i];
+            if (s.turn > turn) {
+                repr_str += '\n' + std::to_string(++row) + ". ";
+            }
+            else {
+                repr_str += " .. ";
+            }
+            turn = s.turn;
+            repr_str += notation_x[turn][m.from.x]; 
+            repr_str += notation_y[turn][m.from.y];
+            repr_str += '-';
+            repr_str += notation_x[turn][m.to.x];
+            repr_str += notation_y[turn][m.to.y];
+        }
+        repr_str += '\n';
+        return repr_str;
+    }
+
 };
 
 game load_game(const std::string& filename) {
@@ -1585,6 +1614,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("get_sample", &game::get_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("get_random_sample", &game::get_random_sample)
         .def("save_game", &game::save_game)
+        .def("get_chess_com_representation", &game::get_chess_com_representation)
         .def("print", &game::print, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>());
     py::class_<game_storage>(m, "game_storage")
         .def(py::init<size_t>(), py::arg("max_size") = 100000)
