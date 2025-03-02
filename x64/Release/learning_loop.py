@@ -24,7 +24,7 @@ ITERATIONS = 1000          # Number of training iterations per evaluation
 PASSES = 10                 # Adjust as needed
 CPU_CORES = 22              # Number of CPU cores to use for MCTS
 STORAGE_SIZE = 20000      # Number of games to store in the game storage
-BUDGET = 200               # Number of MCTS simulations per move (800 in AlphaZero)
+BUDGET = 500               # Number of MCTS simulations per move (800 in AlphaZero)
 
 def main():
     device_training = (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
@@ -41,7 +41,7 @@ def main():
     mcts = MCTS(net_acting, STORAGE_SIZE, CPU_CORES, BUDGET)
     mcts.process_samples('mcts_games')
     mcts.use_model = True
-    mcts.start()
+    # mcts.start()
 
     # training loop
     for l in range(10):
@@ -70,31 +70,21 @@ def main():
 
         #evaluate the network against random player
         evaluator = Eval(net_acting, net_training, CPU_CORES, 2)
-        #control group
-        evaluator.run(BUDGET, (0, -1, -1, -1)) # vanilla MCTS vs random
-        evaluator.run(BUDGET, (-1, 0, -1, -1)) # vanilla MCTS vs random
-        evaluator.run(BUDGET, (-1, -1, 0, -1)) # vanilla MCTS vs random
-        evaluator.run(BUDGET, (-1, -1, -1, 0)) # vanilla MCTS vs random
-        evaluator.run(BUDGET, (2, -1, -1, -1)) # acting_net vs random
-        evaluator.run(BUDGET, (-1, 2, -1, -1)) # acting_net vs random
-        evaluator.run(BUDGET, (-1, -1, 2, -1)) # acting_net vs random
-        evaluator.run(BUDGET, (-1, -1, -1, 2)) # acting_net vs random
-        evaluator.run(BUDGET, (2, 0, 0, 0)) # acting_net vs vanilla MCTS
-        evaluator.run(BUDGET, (0, 2, 0, 0)) # acting_net vs vanilla MCTS
-        evaluator.run(BUDGET, (0, 0, 2, 0)) # acting_net vs vanilla MCTS
-        evaluator.run(BUDGET, (0, 0, 0, 2)) # acting_net vs vanilla MCTS
-        evaluator.run(BUDGET, (2, 1, 1, 1)) # acting_net vs training_net
-        evaluator.run(BUDGET, (1, 2, 1, 1)) # acting_net vs training_net
-        evaluator.run(BUDGET, (1, 1, 2, 1)) # acting_net vs training_net
-        evaluator.run(BUDGET, (1, 1, 1, 2)) # acting_net vs training_net
 
-        #TODO: add logic to compare acting network with training network
-        #copy better network to acting network
-        tools.save_model(net_acting)
-        with open("log.txt", "a") as file:
-            file.write(f"pickle: Actor network gen {l} - {tools.get_model_hash(net_acting)} pickled\n")
-        tools.save_model(net_acting)
-        net_acting.load_state_dict(net_training.state_dict())
+        #evaluator.run_shifting(BUDGET, (2, -1, -1, -1)) # vanilla MCTS vs random
+        #evaluator.run_shifting(BUDGET, (2, 0, 0, 0)) # acting_net vs vanilla MCTS
+        evaluator.run_shifting(499, (2, 1, 1, 1)) # acting_net vs training_net
+        moves_sum, score_sum, rewards_sum, rank_counts = evaluator.run_shifting(BUDGET, (2, 1, 1, 1)) # acting_net vs training_net
+        
+        #copy if better to acting network
+        if rewards_sum[0] > sum(rewards_sum) / len(rewards_sum):
+            tools.save_model(net_training)
+            with open("log.txt", "a") as file:
+                file.write(f"pickle: Training network gen {l} - {tools.get_model_hash(net_training)} pickled\n")
+            tools.save_model(net_acting)
+            net_acting.load_state_dict(net_training.state_dict())
+        else:
+            net_training.load_state_dict(net_acting.state_dict())
 
         mcts.start()
     mcts.stop()

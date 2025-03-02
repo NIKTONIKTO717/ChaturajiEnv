@@ -20,56 +20,57 @@ faulthandler.enable()
 #player = 0 -> vanilla MCTS deterministic policy (competitive play)
 #player = 1 -> acting_net MCTS deterministic policy (competitive play)
 #player = 2 -> training_net MCTS deterministic policy (competitive play)
-def play_game(process_id, net_acting, net_training, directory, n_games, search_budget = 800, players = (0,0,0,0)):
+def play_game(process_id, net_acting, net_training, directories, n_games, search_budget = 800, player_setups = [(0,0,0,0)]):
     tools.set_process(process_id)
-    for p in range(4):
-        if players[p] not in [-1, 0, 1, 2]:
-            raise ValueError('Invalid player value')
-    for game_index in range(n_games):
-        games = [] # every player has own game instance, so they don't use same MCTS tree
-        for _ in range(4):
-            games.append(chaturajienv.game())
-            games[-1].evaluation_game = True
-        turn = 0
-        for _ in range(10000):
-            for p in range(4): #each player has same budget for estimation
-                game = games[p]
-                budget = search_budget #800 in AlphaZero
-                while budget > 0:
-                    sample = game.get_evaluate_sample(8, 0)
-                    sample = torch.from_numpy(sample).unsqueeze(0)
-                    # for random and vanilla MCTS is used vanilla MCTS estimation
-                    if players[p] == -1 or players[p] == 0:
-                        p_out = np.ones(4096)
-                        v_out = np.zeros(4)
-                    else:
-                        if players[p] == 1:
-                            with torch.no_grad():
-                                p_net, v_net = net_acting(sample)
+    for directory, players in zip(directories, player_setups):
+        for p in range(4):
+            if players[p] not in [-1, 0, 1, 2]:
+                raise ValueError('Invalid player value')
+        for game_index in range(n_games):
+            games = [] # every player has own game instance, so they don't use same MCTS tree
+            for _ in range(4):
+                games.append(chaturajienv.game())
+                games[-1].evaluation_game = True
+            turn = 0
+            for _ in range(10000):
+                for p in range(4): #each player has same budget for estimation
+                    game = games[p]
+                    budget = search_budget #800 in AlphaZero
+                    while budget > 0:
+                        sample = game.get_evaluate_sample(8, 0)
+                        sample = torch.from_numpy(sample).unsqueeze(0)
+                        # for random and vanilla MCTS is used vanilla MCTS estimation
+                        if players[p] == -1 or players[p] == 0:
+                            p_out = np.ones(4096)
+                            v_out = np.zeros(4)
                         else:
-                            with torch.no_grad():
-                                p_net, v_net = net_training(sample)
-                        p_out = p_net.squeeze(0).numpy()
-                        v_out = v_net.squeeze(0).numpy()
-                    budget = game.give_evaluated_sample(p_out, v_out, budget)
+                            if players[p] == 1:
+                                with torch.no_grad():
+                                    p_net, v_net = net_acting(sample)
+                            else:
+                                with torch.no_grad():
+                                    p_net, v_net = net_training(sample)
+                            p_out = p_net.squeeze(0).numpy()
+                            v_out = v_net.squeeze(0).numpy()
+                        budget = game.give_evaluated_sample(p_out, v_out, budget)
 
-            game = games[turn]
+                game = games[turn]
 
-            terminaleted = False
-            if players[turn] == -1:
-                terminaleted = game.step_random()
-            else:
-                terminaleted = game.step_deterministic()
+                terminaleted = False
+                if players[turn] == -1:
+                    terminaleted = game.step_random()
+                else:
+                    terminaleted = game.step_deterministic()
 
-            if terminaleted:
-                game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
-                break
-            else:
-                last_action = game.get_action(-1)
-                for i in range(4):
-                    if i != turn:
-                        games[i].step_given(last_action)
-                turn = game.get(-1).turn
+                if terminaleted:
+                    game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
+                    break
+                else:
+                    last_action = game.get_action(-1)
+                    for i in range(4):
+                        if i != turn:
+                            games[i].step_given(last_action)
+                    turn = game.get(-1).turn
         
 
 class Eval:
@@ -115,10 +116,10 @@ class Eval:
                         i, 
                         self.net_acting, 
                         self.net_training,
-                        directory,
+                        [directory],
                         self.n_games, 
                         search_budget, 
-                        players
+                        [players]
                     )
                 )
             p.start()
@@ -136,6 +137,66 @@ class Eval:
         print('\t\t1st\t2nd\t3rd\t4th')
         for i in range(4):
             print(f'Player {i} ({players[i]}):\t{rank_counts[i][0]}\t{rank_counts[i][1]}\t{rank_counts[i][2]}\t{rank_counts[i][3]}')
+        return moves_sum, score_sum, rewards_sum, rank_counts
+    
+    def run_shifting(self, search_budget = 800, players = (0,0,0,0)):
+        directory = tools.directory_name(self.net_acting_hash, self.net_training_hash, search_budget, players)
+        directories = [directory + '_0', directory + '_1', directory + '_2', directory + '_3']
+        for d in directories:
+            os.makedirs(d, exist_ok=True)
+
+        self.net_training.to(self.device_acting)
+        self.net_training.share_memory()
+        self.net_training.eval()
+
+        setups = [
+            players,
+            (players[1], players[2], players[3], players[0]),
+            (players[2], players[3], players[0], players[1]),
+            (players[3], players[0], players[1], players[2])
+        ]
+
+        processes = []
+        for i in range(self.num_processes):
+            p = multiprocessing.Process(
+                    target=play_game, 
+                    args=(
+                        i, 
+                        self.net_acting, 
+                        self.net_training,
+                        directories,
+                        self.n_games, 
+                        search_budget, 
+                        setups,
+                    )
+                )
+            p.start()
+            processes.append(p)
+        print(f'Evaluation budget: {search_budget}, setup: {players} started (including shifting positions)')
+        for p in processes:
+            p.join()
+        
+        self.net_training.to(self.device_training)
+        self.net_training.train()
+
+        moves_sum = 0
+        score_sum = (0,0,0,0)
+        rewards = []
+
+        for i in range(4):
+            moves, scores, rew = self.process_games(directories[i])
+            moves_sum += moves
+            score_shift_back = scores[-i:] + scores[:-i] 
+            for r in rew:
+                rewards.append(r[-i:] + r[:-i])
+            score_sum = tuple(map(sum, zip(score_sum, score_shift_back)))
+        rewards_sum = tuple(map(sum, zip(*rewards)))
+        rewards_sum_formatted = ", ".join([f"{item:.5g}" for item in rewards_sum])
+        print(f'Moves: {moves_sum}, Score: {score_sum}, Rewards: [{rewards_sum_formatted}]')
+        rank_counts = tools.rank_counts(rewards)
+        print('\t\t1st\t2nd\t3rd\t4th')
+        for i in range(4):
+            print(f'Player ({players[i]}):\t{rank_counts[i][0]}\t{rank_counts[i][1]}\t{rank_counts[i][2]}\t{rank_counts[i][3]}')
         return moves_sum, score_sum, rewards_sum, rank_counts
         
     
