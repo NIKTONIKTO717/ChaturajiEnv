@@ -560,7 +560,7 @@ bool state::isOccupied(position p, uint& rew) {
             return true;
         }
         if (player._bishop.get(p.x, p.y)) {
-            rew = player.active ? 3 : 0;
+            rew = player.active ? 5 : 0;
             return true;
         }
         if (player._king.get(p.x, p.y)) {
@@ -780,7 +780,7 @@ void state::makeMove(move& m) {
         }
         else if (p._bishop.get(m.to.x, m.to.y)) {
             p._bishop.set(m.to.x, m.to.y, false);
-            if (p.active) current.score += 3;
+            if (p.active) current.score += 5;
             no_progress_count = 0;
         }
         else if (p._king.get(m.to.x, m.to.y)) {
@@ -1480,18 +1480,28 @@ struct game {
         for (size_t i = 0; i < game_trajectory.size(); i++) {
             auto& s = states[i];
             auto& m = game_trajectory[i];
-            if (s.turn > turn) {
+            if (s.turn < turn) {
                 repr_str += '\n' + std::to_string(++row) + ". ";
             }
             else {
                 repr_str += " .. ";
             }
             turn = s.turn;
-            repr_str += notation_x[turn][m.from.x]; 
-            repr_str += notation_y[turn][m.from.y];
-            repr_str += '-';
-            repr_str += notation_x[turn][m.to.x];
-            repr_str += notation_y[turn][m.to.y];
+            if (turn % 2 == 0) {
+                repr_str += notation_x[turn][m.from.x];
+                repr_str += notation_y[turn][m.from.y];
+                repr_str += '-';
+                repr_str += notation_x[turn][m.to.x];
+                repr_str += notation_y[turn][m.to.y];
+            }
+            else {
+                repr_str += notation_y[turn][m.from.y];
+                repr_str += notation_x[turn][m.from.x];
+                repr_str += '-';
+                repr_str += notation_y[turn][m.to.y];
+                repr_str += notation_x[turn][m.to.x];
+            }
+            
         }
         repr_str += '\n';
         return repr_str;
