@@ -1247,7 +1247,7 @@ struct game {
             throw std::runtime_error("Value head output must have 4 elements");
         }
 
-        float* P_ptr = static_cast<float*>(P_buf.ptr);
+        float* P_ptr = static_cast<float*>(P_buf.ptr); //const float* P_ptr = P.data(0)
         float* V_ptr = static_cast<float*>(V_buf.ptr);
 
         auto* node = current_search_position.get();
@@ -1363,13 +1363,6 @@ struct game {
         move best_a;
         int best_n = -std::numeric_limits<int>::infinity();
 
-        /*std::cout << "Possible moves:" << std::endl;
-
-        root->current_state.printBoard();
-        for (auto& m : root->current_state.getLegalMoves()) {
-            std::cout << m << ", N: " << root->N[m] <<", P:" << root->P[m] << ", value: (" << (root->W[m][0]) / (root->N[m]) << ", " << (root->W[m][1]) / (root->N[m]) << ", " << (root->W[m][2]) / (root->N[m]) << ", " << (root->W[m][3]) / (root->N[m]) << ")" << std::endl;
-        }*/
-
         for (auto it = root->N.begin(); it != root->N.end(); ++it) {
             if (it->second > best_n) {
                 best_a = it->first;
@@ -1380,8 +1373,6 @@ struct game {
         if (evaluation_game) //we don't need to store a policy
             return step(best_a);
 
-        //std::cout << "Choosen action: " << best_a << std::endl;
-
         std::array<float, 4096> policy = { 0.0f };
         policy[best_a.getIndex()] = 1.0f;
         return make_step(std::move(policy));
@@ -1391,13 +1382,6 @@ struct game {
     bool step_stochastic(double temperature = 1.0) {
         if (root->is_terminal) //if terminal, do nothing
             return true;
-
-        /*std::cout << "Possible moves:" << std::endl;
-
-        root->current_state.printBoard();
-        for (auto& m : root->current_state.getLegalMoves()) {
-            std::cout << m << " value: (" << (root->W[m][0]) / (root->N[m]) << ", " << (root->W[m][1]) / (root->N[m]) << ", " << (root->W[m][2]) / (root->N[m]) << ", " << (root->W[m][3]) / (root->N[m]) << ")" << std::endl;
-        }*/
 
         std::array<float, 4096> policy = { 0.0f };
         float N_pow_total = 0.0f;
@@ -1412,13 +1396,6 @@ struct game {
         }
 
         return make_step(std::move(policy));
-
-        /*std::cout << "After step moves:" << std::endl;
-
-        root->current_state.printBoard();
-        for (auto& m : root->current_state.getLegalMoves()) {
-            std::cout << m << " value: (" << (root->W[m][0]) / (root->N[m]) << ", " << (root->W[m][1]) / (root->N[m]) << ", " << (root->W[m][2]) / (root->N[m]) << ", " << (root->W[m][3]) / (root->N[m]) << ")" << std::endl;
-        }*/
     }
 
     // Perform a random step
@@ -1552,6 +1529,43 @@ struct game_storage {
         return games[dist(global_rng())].get_random_sample(T);
     }
 
+    //get random sample given probability distribution of players on move
+    std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample_distribution(int T = 8, float red=0.25f, float blue = 0.25f, float yellow = 0.25f, float green = 0.25f) {
+        std::vector<int> game_sizes(games.size());
+
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+
+        //normalise, get upper bounds
+        float sum = red + blue + yellow + green;
+        float bounds[4];
+        bounds[0] = red / sum;
+        bounds[1] = (bounds[0] + blue) / sum;
+        bounds[2] = (bounds[1] + yellow) / sum;
+        bounds[3] = (bounds[2] + green) / sum;
+
+        double target = dist(global_rng());
+        uint turn = 0;
+
+        for (uint i = 0; i < 4; i++) {
+            if (target <= bounds[i]) {
+                turn = i;
+                break;
+            }
+        }
+        while (true) { //sample until sampled one with last turn with specific color.
+            std::discrete_distribution<> dist(game_sizes.begin(), game_sizes.end());
+            auto sample = games[dist(global_rng())].get_random_sample(T);
+            
+            auto& input = std::get<0>(sample);
+            py::buffer_info input_buf = input.request();
+            float* input_ptr = static_cast<float*>(input_buf.ptr);
+
+            if (input_ptr[1280 * T + 512 + turn * 64] == 1) {
+                return sample;
+            }
+        }
+    }
+
     size_t size() { 
         return games.size(); 
     }
@@ -1632,6 +1646,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("load_game", &game_storage::load_game)
         .def("get_game", &game_storage::get_game)
         .def("get_random_sample", &game_storage::get_random_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("get_random_sample_distribution", &game_storage::get_random_sample_distribution, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("size", &game_storage::size);  //number of stored games
     py::class_<position>(m, "position")
         .def(pybind11::init<uint, uint>())
