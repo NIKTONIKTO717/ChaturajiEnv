@@ -1474,7 +1474,7 @@ struct game {
     }
 
     std::string get_chess_com_representation() {
-        std::string repr_str;
+        std::string repr_str = "[StartFen4 \"R-0,0,0,0-0,0,0,0-0,0,0,0-0,0,0,0-0-{'dim':'8x8','boxOffset':1}-x,x,x,x,x,x,x,x,x,x,x,x,x,x/x,x,x,x,x,x,x,x,x,x,x,x,x,x/x,x,x,x,x,x,x,x,x,x,x,x,x,x/x,x,x,bR,bP,2,yK,yB,yN,yR,x,x,x/x,x,x,bN,bP,2,yP,yP,yP,yP,x,x,x/x,x,x,bB,bP,6,x,x,x/x,x,x,bK,bP,6,x,x,x/x,x,x,6,gP,gK,x,x,x/x,x,x,6,gP,gB,x,x,x/x,x,x,rP,rP,rP,rP,2,gP,gN,x,x,x/x,x,x,rR,rN,rB,rK,2,gP,gR,x,x,x/x,x,x,x,x,x,x,x,x,x,x,x,x,x/x,x,x,x,x,x,x,x,x,x,x,x,x,x/x,x,x,x,x,x,x,x,x,x,x,x,x,x\"][Variant \"FFA\"][RuleVariants \"CaptureTheKing DeadKingWalking EnPassant PointsForMate=10 PromoteTo=R\"][CurrentMove \"0\"][TimeControl \"1 | 7\"]\n";
         uint turn = 4;
         uint row = 0;
         for (size_t i = 0; i < game_trajectory.size(); i++) {
