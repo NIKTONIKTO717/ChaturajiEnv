@@ -983,7 +983,7 @@ py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int 
         flattened[1280 * T + 512 + last_state.turn * 64 + i] = 1.0f;
     }
 
-    //active player planes
+    //moves without progress count
     for (int i = 0; i < 64; i++) {
         flattened[1280 * T + 768 + i] = (float) last_state.no_progress_count;
     }
@@ -1549,7 +1549,6 @@ struct game_storage {
         for (uint i = 0; i < 4; i++) {
             if (target <= bounds[i]) {
                 turn = i;
-                break;
             }
         }
         while (true) { //sample until sampled one with last turn with specific color.
@@ -1560,7 +1559,7 @@ struct game_storage {
             py::buffer_info input_buf = input.request();
             float* input_ptr = static_cast<float*>(input_buf.ptr);
 
-            if (input_ptr[1280 * T + 512 + turn * 64] == 1) {
+            if (input_ptr[1280 * T + 512 + turn * 64] == 1.0f) {
                 return sample;
             }
         }
