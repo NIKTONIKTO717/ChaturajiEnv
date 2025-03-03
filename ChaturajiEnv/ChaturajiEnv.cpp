@@ -1533,7 +1533,8 @@ struct game_storage {
     std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample_distribution(int T = 8, float red=0.25f, float blue = 0.25f, float yellow = 0.25f, float green = 0.25f) {
         std::vector<int> game_sizes(games.size());
 
-        std::uniform_real_distribution<double> dist(0.0, 1.0);
+        std::uniform_real_distribution<double> dist_target(0.0, 1.0);
+        std::discrete_distribution<> dist_game(game_sizes.begin(), game_sizes.end());
 
         //normalise, get upper bounds
         float sum = red + blue + yellow + green;
@@ -1543,7 +1544,7 @@ struct game_storage {
         bounds[2] = bounds[1] + (yellow / sum);
         bounds[3] = bounds[2] + (green / sum);
 
-        double target = dist(global_rng());
+        double target = dist_target(global_rng());
         uint turn = 0;
 
         for (uint i = 4; i > 0; i--) {
@@ -1551,9 +1552,9 @@ struct game_storage {
                 turn = i-1;
             }
         }
+        
         while (true) { //sample until sampled one with last turn with specific color.
-            std::discrete_distribution<> dist(game_sizes.begin(), game_sizes.end());
-            auto sample = games[dist(global_rng())].get_random_sample(T);
+            auto sample = games[dist_game(global_rng())].get_random_sample(T);
             
             auto& input = std::get<0>(sample);
             py::buffer_info input_buf = input.request();
