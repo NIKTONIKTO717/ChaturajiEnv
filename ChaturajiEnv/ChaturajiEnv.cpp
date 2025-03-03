@@ -1549,7 +1549,6 @@ struct game_storage {
 
         double target = dist_target(global_rng());
         uint turn = 0;
-
         for (uint i = 4; i > 0; i--) {
             if (target <= bounds[i-1]) {
                 turn = i-1;
@@ -1557,25 +1556,13 @@ struct game_storage {
         }
         
         while (true) { //sample until sampled one with last turn with specific color.
-            auto game_idx = dist_game(global_rng());
-            auto sample = games[game_idx].get_random_sample(T);
+            auto sample = games[dist_game(global_rng())].get_random_sample(T);
             
             auto& input = std::get<0>(sample);
             py::buffer_info input_buf = input.request();
             float* input_ptr = static_cast<float*>(input_buf.ptr);
 
-            auto& out_v = std::get<2>(sample);
-            py::buffer_info out_v_buf = out_v.request();
-            float* out_v_ptr = static_cast<float*>(out_v_buf.ptr);
-
             if (input_ptr[1280 * T + 512 + turn * 64] == 1.0f) {
-
-                std::cout << "turn: " << turn << ", layers: [" << input_ptr[1280 * T + 512 + 0 * 64] << ", " << input_ptr[1280 * T + 512 + 1 * 64] << ", " << input_ptr[1280 * T + 512 + 2 * 64] << ", " << input_ptr[1280 * T + 512 + 3 * 64] << "]";
-                std::cout << ", scores: [" << input_ptr[1280 * T + 0 * 64] << ", " << input_ptr[1280 * T + 1 * 64] << ", " << input_ptr[1280 * T + 2 * 64] << ", " << input_ptr[1280 * T + 3 * 64] << "]";
-                std::cout << ", active: [" << input_ptr[1280 * T + 256 + 0 * 64] << ", " << input_ptr[1280 * T + 256 + 1 * 64] << ", " << input_ptr[1280 * T + 256 + 2 * 64] << ", " << input_ptr[1280 * T + 256 + 3 * 64] << "]";
-                std::cout << ", V: [" << out_v_ptr[0] << ", " << out_v_ptr[1] << ", " << out_v_ptr[2] << ", " << out_v_ptr[3] << "]";
-                std::cout << ", random: " << target;
-                std::cout << ", game index: " << game_idx << "\n";
                 return sample;
             }
         }
