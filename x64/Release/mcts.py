@@ -108,7 +108,7 @@ class MCTS:
     def cache_size(self):
         return len(os.listdir('cache_games'))
 
-    def get_batch(self, batch_size):
+    def get_batch(self, batch_size, sampling_ratio):
         if self.game_storage.size() == 0:
             return None, None, None
         #just to find out sample, policy, value shapes
@@ -122,7 +122,8 @@ class MCTS:
         values = np.empty((batch_size, *value_shape), dtype=np.float32)
 
         for i in range(batch_size):
-            (sample, policy, value) = self.game_storage.get_random_sample(8)
+            (sample, policy, value) = self.game_storage.get_random_sample_distribution(8, sampling_ratio[0], sampling_ratio[1], sampling_ratio[2], sampling_ratio[3])
+            #(sample, policy, value) = self.game_storage.get_random_sample(8)
             samples[i] = sample
             policies[i] = policy
             values[i] = value
