@@ -1523,7 +1523,7 @@ struct game_storage {
     std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample(int T = 8) {
         std::vector<int> game_sizes(games.size());
         for (size_t i = 0; i < games.size(); i++) {
-            game_sizes[i] = games[i].size() - 2;
+            game_sizes[i] = games[i].size() - 2; //number of different samples we can obtain from this game
         }
         std::discrete_distribution<> dist(game_sizes.begin(), game_sizes.end());
         return games[dist(global_rng())].get_random_sample(T);
@@ -1532,6 +1532,9 @@ struct game_storage {
     //get random sample given probability distribution of players on move
     std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample_distribution(int T = 8, float red=0.25f, float blue = 0.25f, float yellow = 0.25f, float green = 0.25f) {
         std::vector<int> game_sizes(games.size());
+        for (size_t i = 0; i < games.size(); i++) {
+            game_sizes[i] = games[i].size() - 2;
+        }
 
         std::uniform_real_distribution<double> dist_target(0.0, 1.0);
         std::discrete_distribution<> dist_game(game_sizes.begin(), game_sizes.end());
