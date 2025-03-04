@@ -21,40 +21,7 @@ total_score = (0,0,0,0)
 
 game_storage = chaturajienv.game_storage(1000)
 
-p = psutil.Process(os.getpid())
-p.cpu_affinity([1])
-
 start = 0.0
-
-def run_mcts_game(process_id, n_games, search_budget = 800):
-    tools.set_process(process_id, False)
-    start_time = time.time()
-    moves = 0
-    total_score = (0,0,0,0)
-    total_final_reward = [0.0, 0.0, 0.0, 0.0]
-    for game_index in range(n_games):
-        game = chaturajienv.game()
-        for j in range(10000):
-            budget = search_budget #800 in AlphaZero
-            while budget > 0:
-                sample = game.get_evaluate_sample(8, 0)
-                v = np.zeros(4)
-                p = np.ones(4096)
-                budget = game.give_evaluated_sample(p, v, budget)
-
-            if(game.step_stochastic(1.0)):
-                total_score = tuple(map(sum, zip(total_score, game.get(-1).get_score_default())))
-                total_final_reward = [sum(x) for x in zip(total_final_reward, game.final_reward)]
-                print('Game ', g, ' finished after ', j+1, ' moves')
-                print(game.get(-1).get_score_default())
-                moves += j+1
-                break
-        if(game_index % 10 == 0):
-            print('total score:', total_score)
-            print('total final reward:', total_final_reward)
-
-        game.save_game(f'mcts_games/game_{process_id}_{game_index}.bin')
-    print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / moves):.5g}')
 
 for g in range(10):
     game = chaturajienv.game()
@@ -93,6 +60,8 @@ for g in range(10):
     print('total score:', total_score)
     game.print()
     game.save_game('game_exploratory_' + str(g) + '.bin')
+    with open('game_exploratory_' + str(g) + '.txt', 'w') as f:
+        f.write(game.get_chess_com_representation())
     game_storage.load_game('game_exploratory_' + str(g) + '.bin')
 
 print('total time:', start)
