@@ -998,12 +998,6 @@ py::array_t<float> states_to_numpy(const std::vector<state> &states, int T, int 
         );
 }
 
-/*struct game;
-struct MCTSNode;
-BOOST_CLASS_VERSION(game, 1)
-BOOST_CLASS_VERSION(MCTSNode, 1)
-BOOST_SERIALIZATION_SHARED_PTR(MCTSNode)*/
-
 // Struct to represent MCTS nodes
 struct MCTSNode {
     std::unordered_map<move, std::array<float, 4>, move_hash> W;  // Total value of each action
@@ -1027,24 +1021,16 @@ struct MCTSNode {
         move best_action;
         double best_score = -std::numeric_limits<double>::infinity();
 
-        //std::cout << "N\t\tW[0]\t\tP\t\tScore\t\tMove" << std::endl;
-
         for (auto it = N.begin(); it != N.end(); ++it) {
             auto a = it->first;  // action
             auto n = it->second; // number of visits
 
-            //double q = std::get<0>(W.at(a)) / (n + 1e-6);  // Q-value (mean value of next state)
-            //double u = c_puct * action_probabilities.at(a) * sqrt(N_total) / (n + 1e-6);
-            //double score = q + u;
             double score = std::get<0>(W.at(a)) / (n + 1e-6) + (c_puct * P.at(a) * sqrt(N_total)) / (n + 1 + 1e-6);
             if (score > best_score) {
                 best_score = score;
                 best_action = a;
             }
         }
-
-        //std::cout << "Choosen move: " << best_action << std::endl;
-
         return best_action;
     }
 
@@ -1055,9 +1041,6 @@ struct MCTSNode {
         float p_sum = 0.0f;
         for (auto& move : moves) {
             if (children.find(move) == children.end()) {
-                //state state_copy = current_state;
-                //state_copy.step(move);
-                //children.emplace(move, std::make_shared<MCTSNode>(std::move(state_copy), this));
                 children.emplace(move, std::make_shared<MCTSNode>(current_state, this));
                 auto& next_node = children[move];
                 next_node->current_state.step(move);
@@ -1078,21 +1061,6 @@ struct MCTSNode {
                 p = 1.0f;
                 p_sum++;
             }
-            /*current_state.printLegalMoves();
-            current_state.printBoard();
-            std::cout << "---" << std::endl;
-            for (auto& move : moves) {
-                std::cout << move << " P: " << P_ptr[move.getIndex()] << std::endl;
-            }
-            float p_total_sum = 0.0f;
-            for (size_t i = 0; i < 4096; i++ ) {
-                p_total_sum+= P_ptr[i];
-                if (P_ptr[i] < -0.01 || P_ptr[i] > 0.01) {
-                    std::cout << "P != 0, move: " << i << " P: " << P_ptr[i] << std::endl;
-                }
-            }
-            std::cout << "Total P sum : " << p_total_sum << std::endl;
-            throw std::runtime_error("expand(): No legal move.");*/
         }
         //normalizing, adding dirichlet
         if (add_dirichlet) {
@@ -1277,7 +1245,6 @@ struct game {
         while (!current_search_position->is_leaf && budget >= 0) {
             auto next_move = current_search_position->select_best_action();
             mcts_trajectory.push_back(next_move);
-            //std::cout << "Trajectory push: " << next_move << ", Value: " << current_search_position->children[next_move] << "\n";
             current_search_position = current_search_position->children[next_move];
             if (current_search_position->is_terminal) { //if terminal we can determine value without evaluating by nn
                 auto& values = current_search_position->value;
