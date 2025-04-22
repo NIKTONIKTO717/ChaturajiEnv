@@ -1049,10 +1049,11 @@ struct MCTSNode {
                     next_node->is_terminal = true;
                     next_node->value = next_node->current_state.getFinalReward();
                 }
+                N[move] = 0;
+                W[move] = { 0.0f, 0.0f, 0.0f, 0.0f };
+                if (P_ptr) // can occur when calling step_given()
+                    P[move] = P_ptr[move.getIndex()];
             }
-            N[move] = 0;
-            W[move] = { 0.0f, 0.0f, 0.0f, 0.0f };
-            P[move] = P_ptr[move.getIndex()];
             p_sum += P[move];
         }
         //can happen in early stages of training, set uniform probability
@@ -1108,7 +1109,7 @@ struct game {
     std::shared_ptr<MCTSNode> root; // Root of the MCTS tree
     std::shared_ptr<MCTSNode> current_search_position; // current position, which will be used when called get_evaluate_sample()
     bool finished = false;
-    std::array<float, 4> final_reward = { 0.0f, 0.0f, 0.0f, 0.0f };
+    std::array<float, 4> final_reward = { 0.0f, 0.0f, 0.0f, 0.0f }; //starting from 1st player
     std::deque<move> mcts_trajectory;
     bool evaluation_game = false;
 
@@ -1318,7 +1319,7 @@ struct game {
         if (!root->current_state.isLegalMove(action)) { //check if move is valid
             throw std::runtime_error("step_given(): Given move isn't legal.");
         }
-
+        root->expand(nullptr);
         return step(action);
     }
 
@@ -1451,6 +1452,14 @@ struct game {
         return repr_str;
     }
 
+    void print_statistics() {
+        std::cout << "Turn: " << root->current_state.turn << std::endl;
+        std::cout << "N\tW\tP\tmove" << std::endl;
+        for (auto& move : root->current_state.getLegalMoves()) {
+            std::cout << root->N[move] << '\t' << std::get<0>(root->W[move]) << '\t' << root->P[move] << '\t' << move << std::endl;
+        }
+    }
+
 };
 
 game load_game(const std::string& filename) {
@@ -1497,7 +1506,7 @@ struct game_storage {
     }
 
     //get random sample given probability distribution of players on move
-    std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample_distribution(int T = 8, float red=0.25f, float blue = 0.25f, float yellow = 0.25f, float green = 0.25f) {
+    std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample_distribution(int T = 8, float red=0.25f, float blue = 0.25f, float yellow = 0.25f, float green = 0.25f, float win = 0.5f) {
         std::vector<int> game_sizes(games.size());
         for (size_t i = 0; i < games.size(); i++) {
             game_sizes[i] = games[i].size() - 2;
@@ -1505,6 +1514,7 @@ struct game_storage {
 
         std::uniform_real_distribution<double> dist_target(0.0, 1.0);
         std::discrete_distribution<> dist_game(game_sizes.begin(), game_sizes.end());
+        std::bernoulli_distribution dist_value(win);
 
         //normalise, get upper bounds
         float sum = red + blue + yellow + green;
@@ -1521,6 +1531,8 @@ struct game_storage {
                 turn = i-1;
             }
         }
+
+        bool value = dist_value(global_rng()); // true means returning "winning" position, false returning "loosing" position ("winning" -> value >= 0) 
         
         while (true) { //sample until sampled one with last turn with specific color.
             auto sample = games[dist_game(global_rng())].get_random_sample(T);
@@ -1529,8 +1541,13 @@ struct game_storage {
             py::buffer_info input_buf = input.request();
             float* input_ptr = static_cast<float*>(input_buf.ptr);
 
-            if (input_ptr[1280 * T + 512 + turn * 64] == 1.0f) {
-                return sample;
+            auto& value_output = std::get<2>(sample);
+            py::buffer_info value_output_buf = value_output.request();
+            float* value_output_ptr = static_cast<float*>(value_output_buf.ptr);
+
+            if (input_ptr[1280 * T + 512 + turn * 64] == 1.0f) { // player on turn
+                if(value && value_output_ptr[0] >= 0.0f || (!value && value_output_ptr[0] <= 0.0f))
+                    return sample;
             }
         }
     }
@@ -1539,7 +1556,6 @@ struct game_storage {
         return games.size(); 
     }
 };
-
 
 PYBIND11_MODULE(chaturajienv, m) {
     m.doc() = "Chaturaji environment";
@@ -1608,7 +1624,8 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("get_random_sample", &game::get_random_sample)
         .def("save_game", &game::save_game)
         .def("get_chess_com_representation", &game::get_chess_com_representation)
-        .def("print", &game::print, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>());
+        .def("print", &game::print, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("print_statistics", &game::print_statistics, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>());
     py::class_<game_storage>(m, "game_storage")
         .def(py::init<size_t>(), py::arg("max_size") = 100000)
         .def("add_game", &game_storage::add_game)
@@ -1640,7 +1657,15 @@ PYBIND11_MODULE(chaturajienv, m) {
     m.def("load_game", &load_game);
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    // load bin game and output chess.com representation
+    if (argc == 3 && (std::string(argv[1]) == "-g" || std::string(argv[1]) == "--game")) {
+        std::string filename = argv[2];
+        game g = load_game(filename);
+        std::cout << g.get_chess_com_representation() << std::endl;
+        return 0;
+    }
+
     state s;
     game g;
     //auto val = g.to_numpy(1);
