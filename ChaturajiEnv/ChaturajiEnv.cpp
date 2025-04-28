@@ -1017,7 +1017,7 @@ struct MCTSNode {
 
     
     //PUCT (https://medium.com/oracledevs/lessons-from-alphazero-part-3-parameter-tweaking-4dceb78ed1e5)
-    move select_best_action(double c_puct = 4) const { //4 is suggestion from medium.com article
+    move select_best_action(float c_puct = 4.0f) const { //4 is suggestion from medium.com article
         move best_action;
         double best_score = -std::numeric_limits<double>::infinity();
 
@@ -1035,7 +1035,7 @@ struct MCTSNode {
     }
 
     // Expand a node by adding child nodes for all legal moves
-    //processes P - multiplay by mask, normalize and add dirichlet if in root
+    //processes P - multiply by mask, normalize and add dirichlet if in root
     void expand(float* P_ptr, bool add_dirichlet = false) {
         auto moves = current_state.getLegalMoves();
         float p_sum = 0.0f;
@@ -1103,14 +1103,14 @@ struct MCTSNode {
 
 // Struct to represent the game with a vector of states
 struct game {
-    std::vector<state> states;
-    std::vector<move> game_trajectory;
-    std::vector<std::array<float, 4096>> probabilities;
-    std::shared_ptr<MCTSNode> root; // Root of the MCTS tree
+    std::vector<state> states; //states from the start up to last seen state
+    std::vector<move> game_trajectory; // moves between states
+    std::vector<std::array<float, 4096>> probabilities; // policies used to choose a move
+    std::shared_ptr<MCTSNode> root; // Root of the MCTS tree, last state from states
     std::shared_ptr<MCTSNode> current_search_position; // current position, which will be used when called get_evaluate_sample()
     bool finished = false;
     std::array<float, 4> final_reward = { 0.0f, 0.0f, 0.0f, 0.0f }; //starting from 1st player
-    std::deque<move> mcts_trajectory;
+    std::deque<move> mcts_trajectory; // trajectory from MCTS root up to position searched right now
     bool evaluation_game = false;
 
     int size() {
@@ -1190,7 +1190,7 @@ struct game {
         return current_search_position->current_state.getLegalMoveMask();
     }
 
-    move find_move_for_node(const std::map<move, std::shared_ptr<MCTSNode>>& children, MCTSNode* node) {
+    move find_move_for_node(const std::map<move, std::shared_ptr<MCTSNode>>& children, MCTSNode* node) { //TODO: remove?
         // Iterate through the map and compare node pointers
         for (const auto& entry : children) {
             if (entry.second.get() == node) {
@@ -1202,7 +1202,7 @@ struct game {
     }
 
     // returns new budget (number of left rollouts)
-    int give_evaluated_sample(const py::array_t<float>& P, const py::array_t<float>& V, int budget) {
+    int give_evaluated_sample(const py::array_t<float>& P, const py::array_t<float>& V, int budget, float c_puct = 4.0f) {
         if (budget <= 0) return budget;
         /*current_search_position is already leaf node, not expanded*/
 
@@ -1244,7 +1244,7 @@ struct game {
         budget--;
         current_search_position = root;
         while (!current_search_position->is_leaf && budget >= 0) {
-            auto next_move = current_search_position->select_best_action();
+            auto next_move = current_search_position->select_best_action(c_puct);
             mcts_trajectory.push_back(next_move);
             current_search_position = current_search_position->children[next_move];
             if (current_search_position->is_terminal) { //if terminal we can determine value without evaluating by nn
@@ -1376,6 +1376,7 @@ struct game {
         return states_to_numpy(states, T, skip);
     }
 
+    // equivalent of: std::tuple<py::array_t<float>, std::array<float, 4096>, std::array<float, 4>>
     std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_sample(int T, int skip = 0) {
         auto index_last = states.size() - (skip + 2); //(+1) size is last_index+1, (+1) last state in sample is last state before terminated
         if(index_last < 0) throw std::out_of_range("get_sample(): skip argument out of bounds");
@@ -1446,7 +1447,6 @@ struct game {
                 repr_str += notation_y[turn][m.to.y];
                 repr_str += notation_x[turn][m.to.x];
             }
-            
         }
         repr_str += '\n';
         return repr_str;
@@ -1480,6 +1480,9 @@ struct game_storage {
     }
 
     void load_game(const std::string& filename) {
+        if (games.size() >= max_size) {
+            games.pop_front();
+        }
         games.push_back(filename); //calls constructor which loads binary file
     }
 
@@ -1496,17 +1499,32 @@ struct game_storage {
     }
 
     //get random sample
-    std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample(int T = 8) {
+    std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample(int T = 8, bool winrate_sampling = true, float win = 0.5f) {
         std::vector<int> game_sizes(games.size());
         for (size_t i = 0; i < games.size(); i++) {
             game_sizes[i] = games[i].size() - 2; //number of different samples we can obtain from this game
         }
         std::discrete_distribution<> dist(game_sizes.begin(), game_sizes.end());
-        return games[dist(global_rng())].get_random_sample(T);
+        if(!winrate_sampling)
+            return games[dist(global_rng())].get_random_sample(T);
+        else {
+            std::bernoulli_distribution dist_value(win);
+            bool value = dist_value(global_rng());
+            while (true) {
+                auto sample = games[dist(global_rng())].get_random_sample(T);
+
+                auto& value_output = std::get<2>(sample);
+                py::buffer_info value_output_buf = value_output.request();
+                float* value_output_ptr = static_cast<float*>(value_output_buf.ptr);
+
+                if ((value && value_output_ptr[0] >= 0.0f) || (!value && value_output_ptr[0] <= 0.0f)) // player is winning/loosing
+                    return sample;
+            }
+        }
     }
 
     //get random sample given probability distribution of players on move
-    std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample_distribution(int T = 8, float red=0.25f, float blue = 0.25f, float yellow = 0.25f, float green = 0.25f, float win = 0.5f) {
+    std::tuple<py::array_t<float>, py::array_t<float>, py::array_t<float>> get_random_sample_distribution(int T = 8, float red = 0.25f, float blue = 0.25f, float yellow = 0.25f, float green = 0.25f, bool winrate_sampling = true, float win = 0.5f) {
         std::vector<int> game_sizes(games.size());
         for (size_t i = 0; i < games.size(); i++) {
             game_sizes[i] = games[i].size() - 2;
@@ -1546,7 +1564,7 @@ struct game_storage {
             float* value_output_ptr = static_cast<float*>(value_output_buf.ptr);
 
             if (input_ptr[1280 * T + 512 + turn * 64] == 1.0f) { // player on turn
-                if(value && value_output_ptr[0] >= 0.0f || (!value && value_output_ptr[0] <= 0.0f))
+                if(!winrate_sampling || (value && value_output_ptr[0] >= 0.0f) || (!value && value_output_ptr[0] <= 0.0f)) // player is winning/loosing
                     return sample;
             }
         }
