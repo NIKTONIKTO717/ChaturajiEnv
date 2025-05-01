@@ -38,7 +38,7 @@ def run_mcts_game(process_id, net, stop_event, search_budget, use_model):
                     p = np.random.rand(4096)
                     v = np.random.rand(4)
 
-                budget = game.give_evaluated_sample(p, v, budget)
+                budget = game.give_evaluated_sample(p, v, budget, 4.0) #c_puct = 4.0
 
             if(game.step_stochastic(1.0)):
                 game_index += 1
@@ -46,7 +46,7 @@ def run_mcts_game(process_id, net, stop_event, search_budget, use_model):
                 break
 
         game.save_game(f'cache_games/game_{process_id}_{game_index}.bin')
-    print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / (moves + 1)):.5g}')
+    print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / (moves + 1)):.5g}', flush=True)
 
 class MCTS:
     def __init__(self, net, storage_size = 200000, num_processes = 7, budget = 800):
@@ -77,6 +77,7 @@ class MCTS:
         for file in os.listdir('cache_games'):
             self.game_storage.load_game(f'cache_games/{file}')
             os.remove(f'cache_games/{file}')
+        print('Game storage size:', self.game_storage.size(), flush=True)
 
     def start(self):
         #make sure cache is clear
@@ -108,11 +109,11 @@ class MCTS:
     def cache_size(self):
         return len(os.listdir('cache_games'))
 
-    def get_batch(self, batch_size, sampling_ratio):
+    def get_batch(self, batch_size, sampling_ratio, winrate_sampling = True, win_ratio = 0.5):
         if self.game_storage.size() == 0:
             return None, None, None
         #just to find out sample, policy, value shapes
-        (sample, policy, value) = self.game_storage.get_random_sample(8)
+        (sample, policy, value) = self.game_storage.get_random_sample(8, winrate_sampling, win_ratio)
         sample_shape = sample.shape
         policy_shape = policy.shape
         value_shape = value.shape
@@ -122,8 +123,10 @@ class MCTS:
         values = np.empty((batch_size, *value_shape), dtype=np.float32)
 
         for i in range(batch_size):
-            (sample, policy, value) = self.game_storage.get_random_sample_distribution(8, sampling_ratio[0], sampling_ratio[1], sampling_ratio[2], sampling_ratio[3])
-            #(sample, policy, value) = self.game_storage.get_random_sample(8)
+            if sampling_ratio is None:
+                (sample, policy, value) = self.game_storage.get_random_sample(8, winrate_sampling, win_ratio)
+            else:
+                (sample, policy, value) = self.game_storage.get_random_sample_distribution(8, sampling_ratio[0], sampling_ratio[1], sampling_ratio[2], sampling_ratio[3], winrate_sampling, win_ratio)
             samples[i] = sample
             policies[i] = policy
             values[i] = value

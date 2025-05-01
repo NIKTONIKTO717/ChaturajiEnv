@@ -53,7 +53,7 @@ def run_mcts_game(process_id, n_games, search_budget = 800):
 def main():
     os.makedirs('mcts_games', exist_ok=True)
     processes = []
-    for i in [1,2,4,5,7,8,9,10]: # optimization for specific CPU best performing cores
+    for i in [1,2,4,5,7,8,9,10]: # optimization for specific CPU best performing cores (13,15,19,20,11,4,6)
         #2 virtual CPU are used for one physical CPU core, we use only physical CPU per process
         p = multiprocessing.Process(target=run_mcts_game, args=(2*i, 100, 80000))
         p.start()

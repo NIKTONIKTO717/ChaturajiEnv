@@ -27,8 +27,15 @@ def set_process(process_id, info=False):
     if info:
         print(f"Process {process_id} started")
 
-def directory_name(hash_acting, hash_training, search_budget, players):
-    return f'evaluated_games/{hash_acting}_{hash_training}_{search_budget}_{players[0]}_{players[1]}_{players[2]}_{players[3]}'
+def directory_name(dir, hashes, search_budget, players):
+    name = f'{dir}_games/'
+    for hash in hashes:
+        name += f'{hash}_'
+    name += f'{search_budget}_'
+    for player in players:
+        name += f'{player}_'
+    name = name[:-1]  # Remove the last underscore
+    return name
 
 # counts the number of times each player finished at each rank
 # if multiple players finish at the same rank, they all get the same rank
@@ -65,3 +72,7 @@ def get_model_hash(model, length=8):
 def save_model(model):
     os.makedirs('models', exist_ok=True)
     torch.save(model.state_dict(), f'models/{get_model_hash(model)}.pickle')
+
+def save_model_by_name(model, name):
+    os.makedirs('models', exist_ok=True)
+    torch.save(model.state_dict(), f'models/{name}.pickle')

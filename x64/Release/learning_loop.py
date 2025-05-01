@@ -11,43 +11,52 @@ import multiprocessing
 import time
 import faulthandler
 from network import AlphaZeroNet
-from mcts import MCTS
+from mcts import MCTS 
 from evaluation import Eval
 import tools
+import pickle
+from torch.optim.lr_scheduler import StepLR
 faulthandler.enable()
 
 # === Hyperparameters ===
-LEARNING_RATE = 1e-4       # Recommended: 1e-4 to 3e-4
+LEARNING_RATE = 1e-2        # Recommended: 1e-4 to 3e-4
 BATCH_SIZE = 2048           # Recommended: 512-2048 (depending on memory)
-L2_REG = 1e-4              # Weight decay (L2 regularization) to prevent overfitting
-ITERATIONS = 1000          # Number of training iterations per evaluation
+L2_REG = 1e-4               # Weight decay (L2 regularization) to prevent overfitting
+ITERATIONS = 1000           # Number of training iterations per evaluation
 PASSES = 10                 # Adjust as needed
-CPU_CORES = 22              # Number of CPU cores to use for MCTS
-STORAGE_SIZE = 20000      # Number of games to store in the game storage
-BUDGET = 200               # Number of MCTS simulations per move (800 in AlphaZero)
+CPU_CORES = 4              # Number of CPU cores to use for MCTS
+STORAGE_SIZE = 5000         # Number of games to store in the game storage
+BUDGET = 400                # Number of MCTS simulations per move (800 in AlphaZero)
+EVAL_GAMES = 2              # Number of games to evaluate per CPU core    
 
 def main():
+    start_time = time.time()
     device_training = (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
     device_acting = (torch.device('cpu'))
     print(f"Training device: {device_training}, Acting device: {device_acting}")
 
     # 20 * 8 + 4 + 4 + 4 + 1 = 173
-    net_acting = AlphaZeroNet((173,8,8), 4096, 4, 16, 16).to(device_acting)
-    net_training = AlphaZeroNet((173,8,8), 4096, 4, 16, 16).to(device_training)
+    net_acting = AlphaZeroNet((173,8,8), 4096, 8, 32, 32).to(device_acting)
+    net_training = AlphaZeroNet((173,8,8), 4096, 8, 32, 32).to(device_training)
     net_acting.eval()
     net_training.train()
     optimizer = optim.Adam(net_training.parameters(), lr=LEARNING_RATE, weight_decay=L2_REG)
+    scheduler = StepLR(optimizer, step_size=100, gamma=0.2)
 
     mcts = MCTS(net_acting, STORAGE_SIZE, CPU_CORES, BUDGET)
     mcts.process_samples('mcts_games')
     mcts.use_model = True
-    # mcts.start()
 
     sampling_ratio = np.array([0.25, 0.25, 0.25, 0.25])
+    moves_array = []
+    score_array = []
+    rewards_array = []
+    rank_counts_array = []
     # training loop
-    for l in range(10):
+    for l in range(1000):
+        print(f"Training network gen {l}", flush=True)
         for i in range(ITERATIONS): #from alpha zero - checkpoint every 1000 steps
-            samples, policies, values = mcts.get_batch(BATCH_SIZE, sampling_ratio)
+            samples, policies, values = mcts.get_batch(BATCH_SIZE, None, False, 0.5) # sampling_ratio
             samples = torch.tensor(samples, dtype=torch.float32, device=device_training)
             policies = torch.tensor(policies, dtype=torch.float32, device=device_training)
             values = torch.tensor(values, dtype=torch.float32, device=device_training)
@@ -65,31 +74,43 @@ def main():
                 optimizer.step()
                 
                 if(e + 1 == PASSES and i % 100 == 0):
-                    print(f"Iteration {i}: Policy Loss: {policy_loss.item():.4f}, Value Loss: {value_loss.item():.4f}, Total Loss: {total_loss.item():.4f}")
+                    print(f"Iteration {i}: Policy Loss: {policy_loss.item():.4f}, Value Loss: {value_loss.item():.4f}, Total Loss: {total_loss.item():.4f}", flush=True)
 
+        scheduler.step()
         mcts.stop()
 
         #evaluate the network against random player
-        evaluator = Eval(net_acting, net_training, CPU_CORES, 2)
+        evaluator = Eval(net_acting, net_training, CPU_CORES, EVAL_GAMES)
 
         #evaluator.run_shifting(BUDGET, (2, -1, -1, -1)) # vanilla MCTS vs random
+        #### MCTS ####
         #evaluator.run_shifting(BUDGET, (2, 0, 0, 0)) # acting_net vs vanilla MCTS
-        moves_sum_0, score_sum_0, rewards_sum_0, rank_counts_0 = evaluator.run(BUDGET, (2, 1, 1, 1)) # acting_net vs training_net
-        moves_sum_1, score_sum_1, rewards_sum_1, rank_counts_1 = evaluator.run(BUDGET, (1, 2, 1, 1)) # acting_net vs training_net
-        moves_sum_2, score_sum_2, rewards_sum_2, rank_counts_2 = evaluator.run(BUDGET, (1, 1, 2, 1)) # acting_net vs training_net
-        moves_sum_3, score_sum_3, rewards_sum_3, rank_counts_3 = evaluator.run(BUDGET, (1, 1, 1, 2)) # acting_net vs training_net
-        #evaluator.run_shifting(300, (2, 1, 1, 1)) # acting_net vs training_net
-        #moves_sum, score_sum, rewards_sum, rank_counts = evaluator.run_shifting(BUDGET, (2, 1, 1, 1)) # acting_net vs training_net
+        #### SEPARATELY EVAL ####
+        #moves_sum_0, score_sum_0, rewards_sum_0, rank_counts_0 = evaluator.run(BUDGET, (2, 1, 1, 1)) # acting_net vs training_net
+        #moves_sum_1, score_sum_1, rewards_sum_1, rank_counts_1 = evaluator.run(BUDGET, (1, 2, 1, 1)) # acting_net vs training_net
+        #moves_sum_2, score_sum_2, rewards_sum_2, rank_counts_2 = evaluator.run(BUDGET, (1, 1, 2, 1)) # acting_net vs training_net
+        #moves_sum_3, score_sum_3, rewards_sum_3, rank_counts_3 = evaluator.run(BUDGET, (1, 1, 1, 2)) # acting_net vs training_net
+        #rewards = np.array([rewards_sum_0[0], rewards_sum_1[1], rewards_sum_2[2], rewards_sum_3[3]])
+        #### SHIFTING EVAL ####
+        #moves_sum, score_sum, rewards_sum, rewards_sum_min, rank_counts = evaluator.run_shifting(BUDGET, (2, 1, 1, 1)) # acting_net vs training_net
+        #moves_array.append(moves_sum)
+        #score_array.append(score_sum)
+        #rewards_array.append(rewards_sum)
+        #rank_counts_array.append(rank_counts)
 
-        rewards = np.array([rewards_sum_0[0], rewards_sum_1[1], rewards_sum_2[2], rewards_sum_3[3]])
-        tau = 1.0
-        rewards_exp = np.exp(-rewards / (tau * CPU_CORES * 2)) # normalize by number of games
-        sampling_ratio = rewards_exp / np.sum(rewards_exp)
-        print(f"Sampling ratio: {sampling_ratio}")
+        #tau = 1.0
+        #rewards_exp = np.exp(-rewards / (tau * CPU_CORES * 2)) # normalize by number of games
+        #sampling_ratio = rewards_exp / np.sum(rewards_exp)
+        #print(f"Sampling ratio: {sampling_ratio}")
+
+       
         
         #copy if better to acting network
-        #if rewards_sum[0] > 0:
-        if sum(rewards) > 0:
+        #if rewards_sum[0] >= 6: # maximum is +60
+        #if sum(rewards) > 0:
+        #if min(rewards_sum_0[0], rewards_sum_1[1], rewards_sum_2[2], rewards_sum_3[3]) > 0:
+        #if rewards_sum_min[0] > 0:
+        if True:
             tools.save_model(net_training)
             with open("log.txt", "a") as file:
                 file.write(f"pickle: Training network gen {l} - {tools.get_model_hash(net_training)} pickled\n")
@@ -99,6 +120,14 @@ def main():
             net_training.load_state_dict(net_acting.state_dict())
 
         mcts.start()
+        #pickle python arrays
+        pickle.dump(moves_array, open("moves_array.pkl", "wb"))
+        pickle.dump(score_array, open("score_array.pkl", "wb"))
+        pickle.dump(rewards_array, open("rewards_array.pkl", "wb"))
+        pickle.dump(rank_counts_array, open("rank_counts_array.pkl", "wb"))
+        tools.save_model_by_name(net_acting, f'acting_net_{int((time.time() - start_time) // 3600)}')
+        time.sleep(600) # generate more games
+
     mcts.stop()
 
 
