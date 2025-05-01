@@ -1008,7 +1008,7 @@ struct MCTSNode {
     state current_state;        // Game state at this node
     bool is_terminal = false;   // Whether this is a terminal node
     bool is_leaf = true;   // Whether this is a leaf node
-    std::array<float, 4> value{ 0.0f, 0.0f, 0.0f, 0.0f };         // Value of this node (only used for backpropagation)
+    std::array<float, 4> value{ 0.0f, 0.0f, 0.0f, 0.0f };         // Value of this node (only used for backpropagation), rotated to current player
     int N_total = 0;
 
     MCTSNode(const state& s, MCTSNode* p = nullptr) : current_state(s), parent(p) {}
@@ -1240,7 +1240,7 @@ struct game {
         }
 
         /*Start again from root and do while not reached leaf node...*/
-        mcts_trajectory.resize(0);
+        mcts_trajectory.clear();
         budget--;
         current_search_position = root;
         while (!current_search_position->is_leaf && budget >= 0) {
@@ -1266,7 +1266,7 @@ struct game {
                     node->N[*it]++;
                     node->N_total++;
                 }
-                mcts_trajectory.resize(0);
+                mcts_trajectory.clear();
                 budget--;
                 current_search_position = root;
             }
@@ -1325,6 +1325,24 @@ struct game {
 
     // Perform a deterministic step by choosing the action with the highest N
     bool step_deterministic() {
+        if (root->is_terminal) //if terminal, do nothing
+            return true;
+
+        move best_a;
+        int best_n = -std::numeric_limits<int>::infinity();
+
+        for (auto it = root->N.begin(); it != root->N.end(); ++it) {
+            if (it->second > best_n) {
+                best_a = it->first;
+                best_n = it->second;
+            }
+        }
+        // deterministic step is usually used only during evaluation game, generating and storing deterministic policy isn't necessary.
+        return step(best_a);
+    }
+
+    // For special scenario where one wants to take deterministic move but store policy
+    bool step_deterministic_not_optimized() {
         if (root->is_terminal) //if terminal, do nothing
             return true;
 
@@ -1634,6 +1652,7 @@ PYBIND11_MODULE(chaturajienv, m) {
         .def("give_evaluated_sample", &game::give_evaluated_sample, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("get_legal_moves_mask", &game::get_legal_moves_mask)
         .def("step_deterministic", &game::step_deterministic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
+        .def("step_deterministic_not_optimized", &game::step_deterministic_not_optimized, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_stochastic", &game::step_stochastic, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_random", &game::step_random, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
         .def("step_given", &game::step_given, py::call_guard<py::scoped_ostream_redirect, py::scoped_estream_redirect>())
