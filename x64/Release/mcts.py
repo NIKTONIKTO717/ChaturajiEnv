@@ -17,8 +17,10 @@ import pybind11
 from network import AlphaZeroNet
 faulthandler.enable()
 
-def run_mcts_game(process_id, net, stop_event, search_budget, use_model):
-    tools.set_process(process_id, False)
+def run_mcts_game(process_id, net, stop_event, search_budget, use_model, hash=''):
+    tools.set_process(process_id)
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
     game_index = 0
     start_time = time.time()
     moves = 0
@@ -45,11 +47,11 @@ def run_mcts_game(process_id, net, stop_event, search_budget, use_model):
                 moves += j+1
                 break
 
-        game.save_game(f'cache_games/game_{process_id}_{game_index}.bin')
+        game.save_game(f'cache_games/game_{hash}_{process_id}_{game_index}.bin')
     print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / (moves + 1)):.5g}', flush=True)
 
 class MCTS:
-    def __init__(self, net, storage_size = 200000, num_processes = 7, budget = 800):
+    def __init__(self, net, storage_size = 200000, num_processes = 7, budget = 800, directories = ['cache_games']):
         #network related
         self.net = net # The shared network
 
@@ -58,7 +60,9 @@ class MCTS:
         self.num_processes = num_processes
         self.stop_event = multiprocessing.Event()
         self.processes = []
-        os.makedirs('cache_games', exist_ok=True)
+        self.directories = directories
+        for directory in directories:
+            os.makedirs(directory, exist_ok=True)
 
         #mcts related
         self.budget = budget
@@ -71,17 +75,21 @@ class MCTS:
 
     def process_samples(self, directory):
         for file in os.listdir(directory):
-            self.game_storage.load_game(f'{directory}/{file}')
+            if file.endswith(".bin"):
+                self.game_storage.load_game(f'{directory}/{file}')
 
     def process_cache(self):
-        for file in os.listdir('cache_games'):
-            self.game_storage.load_game(f'cache_games/{file}')
-            os.remove(f'cache_games/{file}')
+        for directory in self.directories:
+            for file in os.listdir(directory):
+                if file.endswith(".bin"):
+                    self.game_storage.load_game(f'{directory}/{file}')
+                    os.remove(f'{directory}/{file}')
         print('Game storage size:', self.game_storage.size(), flush=True)
 
-    def start(self):
+    def start(self, process_cache = True):
         #make sure cache is clear
-        self.process_cache()
+        if process_cache:
+            self.process_cache()
         self.processes = []
         self.stop_event.clear()
         #set network to eval mode
@@ -92,16 +100,17 @@ class MCTS:
         for i in range(self.num_processes):
             p = multiprocessing.Process(
                     target=run_mcts_game, 
-                    args=(i, self.net, self.stop_event, self.budget, self.use_model)
+                    args=(i, self.net, self.stop_event, self.budget, self.use_model, tools.get_model_hash(self.net))
             )
             p.start()
             self.processes.append(p)
 
-    def stop(self):
+    def stop(self, process_cache = True):
         self.stop_event.set()
         for p in self.processes:
             p.join()
-        self.process_cache()
+        if process_cache:
+            self.process_cache()
     
     def size(self):
         return self.game_storage.size()

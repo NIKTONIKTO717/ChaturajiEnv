@@ -26,47 +26,17 @@ p.cpu_affinity([1])
 
 start = 0.0
 
-def run_mcts_game(process_id, n_games, search_budget = 800):
-    tools.set_process(process_id, False)
-    start_time = time.time()
-    moves = 0
-    total_score = (0,0,0,0)
-    total_final_reward = [0.0, 0.0, 0.0, 0.0]
-    for game_index in range(n_games):
-        game = chaturajienv.game()
-        for j in range(10000):
-            budget = search_budget #800 in AlphaZero
-            while budget > 0:
-                sample = game.get_evaluate_sample(8, 0)
-                v = np.zeros(4)
-                p = np.ones(4096)
-                budget = game.give_evaluated_sample(p, v, budget)
-
-            if(game.step_stochastic(1.0)):
-                total_score = tuple(map(sum, zip(total_score, game.get(-1).get_score_default())))
-                total_final_reward = [sum(x) for x in zip(total_final_reward, game.final_reward)]
-                print('Game ', g, ' finished after ', j+1, ' moves')
-                print(game.get(-1).get_score_default())
-                moves += j+1
-                break
-        if(game_index % 10 == 0):
-            print('total score:', total_score)
-            print('total final reward:', total_final_reward)
-
-        game.save_game(f'mcts_games/game_{process_id}_{game_index}.bin')
-    print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / moves):.5g}')
-
 for g in range(10):
     game = chaturajienv.game()
     start_time = time.time()
     for j in range(10000):
-        budget = 8000 #800 in AlphaZero
+        budget = 800 #800 in AlphaZero
         while budget > 0:
             sample = game.get_evaluate_sample(8, 0)
             v = np.random.rand(4)
             p = np.random.rand(4096)
             start_sample = time.time()
-            budget = game.give_evaluated_sample(p, v, budget)
+            budget = game.give_evaluated_sample(p, v, budget, 4.0)
             start+=time.time()-start_sample
 
         if(game.get(j).turn == 1):
@@ -94,7 +64,7 @@ print('total time:', start)
 print(game_storage.size())
 game_storage.get_game(0).get_sample(8, 1)
 print("get_sample done")
-(sample, policy, value) = game_storage.get_random_sample(8)
+(sample, policy, value) = game_storage.get_random_sample(8, True, 0.5)
 batch_size = 1000
 sample_shape = sample.shape
 policy_shape = policy.shape
@@ -105,7 +75,7 @@ policies = np.empty((batch_size, *policy_shape), dtype=np.float32)
 values = np.empty((batch_size, *value_shape), dtype=np.float32)
 
 for i in range(batch_size):
-    (sample, policy, value) = game_storage.get_random_sample(8)
+    (sample, policy, value) = game_storage.get_random_sample(8, True, 0.5)
     samples[i] = sample
     policies[i] = policy
     values[i] = value

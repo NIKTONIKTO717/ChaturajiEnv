@@ -69,10 +69,8 @@ def get_model_hash(model, length=8):
 
     return hasher.hexdigest()[:length]
 
-def save_model(model):
-    os.makedirs('models', exist_ok=True)
-    torch.save(model.state_dict(), f'models/{get_model_hash(model)}.pickle')
-
-def save_model_by_name(model, name):
-    os.makedirs('models', exist_ok=True)
-    torch.save(model.state_dict(), f'models/{name}.pickle')
+def save_model(model, directory = 'models', name = None):
+    if name is None:
+        name = get_model_hash(model)
+    os.makedirs(directory, exist_ok=True)
+    torch.save(model.state_dict(), f'{directory}/{name}.pkl')

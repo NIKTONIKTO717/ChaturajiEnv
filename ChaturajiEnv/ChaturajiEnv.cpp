@@ -4,7 +4,6 @@
 #include <bitset>
 #include <cassert>
 #include <vector>
-//#include <tuple>
 #include <mutex>
 #include <deque>
 #include <array>
@@ -14,8 +13,9 @@
 #include <cmath>
 #include <algorithm>
 #include <numeric>
+#include <filesystem>
 #include <random>
-#include <python.h>
+#include <Python.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
@@ -1431,10 +1431,11 @@ struct game {
     }
 
     void save_game(const std::string& filename) {
-        std::ofstream ofs(filename, std::ios::binary);
+        std::ofstream ofs(filename + ".tmp", std::ios::binary);
         boost::archive::binary_oarchive oa(ofs);
         oa << *this;
         ofs.close();
+        std::filesystem::rename(filename + ".tmp", filename);
     }
 
     std::string get_chess_com_representation() {

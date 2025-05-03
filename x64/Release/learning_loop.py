@@ -23,11 +23,15 @@ LEARNING_RATE = 1e-2        # Recommended: 1e-4 to 3e-4
 BATCH_SIZE = 2048           # Recommended: 512-2048 (depending on memory)
 L2_REG = 1e-4               # Weight decay (L2 regularization) to prevent overfitting
 ITERATIONS = 1000           # Number of training iterations per evaluation
-PASSES = 10                 # Adjust as needed
-CPU_CORES = 4              # Number of CPU cores to use for MCTS
+PASSES = 1                  # Adjust as needed
+CPU_CORES = 20              # Number of CPU cores to use for MCTS
 STORAGE_SIZE = 5000         # Number of games to store in the game storage
 BUDGET = 400                # Number of MCTS simulations per move (800 in AlphaZero)
 EVAL_GAMES = 2              # Number of games to evaluate per CPU core    
+SELF_PLAY_DIR = ['cache_games', 'C:/Users/jasom/source/repos/ChaturajiEnv2/x64/Release/cache_games2'] # Directory for self-play games
+MODEL_DIR = 'C:/Users/jasom/source/repos/ChaturajiEnv2/x64/Release/models' # Directory for model storage
+SELF_PLAY = True # True if you want to generate self-play games
+PRELOAD_MODEL_FILE = 'mcts_preload.pkl' # Preload model file for acting network
 
 def main():
     start_time = time.time()
@@ -38,23 +42,31 @@ def main():
     # 20 * 8 + 4 + 4 + 4 + 1 = 173
     net_acting = AlphaZeroNet((173,8,8), 4096, 8, 32, 32).to(device_acting)
     net_training = AlphaZeroNet((173,8,8), 4096, 8, 32, 32).to(device_training)
+    if PRELOAD_MODEL_FILE:
+        print(f"Loading model {PRELOAD_MODEL_FILE}")
+        state_dict = torch.load(PRELOAD_MODEL_FILE, map_location="cpu")
+        net_acting.load_state_dict(state_dict)
+        net_training.load_state_dict(state_dict)
     net_acting.eval()
     net_training.train()
     optimizer = optim.Adam(net_training.parameters(), lr=LEARNING_RATE, weight_decay=L2_REG)
-    scheduler = StepLR(optimizer, step_size=100, gamma=0.2)
+    scheduler = StepLR(optimizer, step_size=200, gamma=0.2)
 
-    mcts = MCTS(net_acting, STORAGE_SIZE, CPU_CORES, BUDGET)
-    mcts.process_samples('mcts_games')
+    mcts = MCTS(net_acting, STORAGE_SIZE, CPU_CORES, BUDGET, SELF_PLAY_DIR)
     mcts.use_model = True
+    mcts.process_samples('mcts_games')
 
     sampling_ratio = np.array([0.25, 0.25, 0.25, 0.25])
     moves_array = []
     score_array = []
     rewards_array = []
     rank_counts_array = []
+    policy_loss_array = []
+    value_loss_array = []
     # training loop
     for l in range(1000):
         print(f"Training network gen {l}", flush=True)
+        mcts.process_cache()
         for i in range(ITERATIONS): #from alpha zero - checkpoint every 1000 steps
             samples, policies, values = mcts.get_batch(BATCH_SIZE, None, False, 0.5) # sampling_ratio
             samples = torch.tensor(samples, dtype=torch.float32, device=device_training)
@@ -73,7 +85,9 @@ def main():
                 total_loss.backward()
                 optimizer.step()
                 
-                if(e + 1 == PASSES and i % 100 == 0):
+                if(e + 1 == PASSES and i % 1 == 0):
+                    policy_loss_array.append(policy_loss.item())
+                    value_loss_array.append(value_loss.item())
                     print(f"Iteration {i}: Policy Loss: {policy_loss.item():.4f}, Value Loss: {value_loss.item():.4f}, Total Loss: {total_loss.item():.4f}", flush=True)
 
         scheduler.step()
@@ -111,21 +125,23 @@ def main():
         #if min(rewards_sum_0[0], rewards_sum_1[1], rewards_sum_2[2], rewards_sum_3[3]) > 0:
         #if rewards_sum_min[0] > 0:
         if True:
-            tools.save_model(net_training)
+            net_acting.load_state_dict(net_training.state_dict())
+            tools.save_model(net_acting, MODEL_DIR)
             with open("log.txt", "a") as file:
                 file.write(f"pickle: Training network gen {l} - {tools.get_model_hash(net_training)} pickled\n")
-            tools.save_model(net_acting)
-            net_acting.load_state_dict(net_training.state_dict())
         else:
             net_training.load_state_dict(net_acting.state_dict())
+        if SELF_PLAY:
+            mcts.start()
 
-        mcts.start()
         #pickle python arrays
         pickle.dump(moves_array, open("moves_array.pkl", "wb"))
         pickle.dump(score_array, open("score_array.pkl", "wb"))
         pickle.dump(rewards_array, open("rewards_array.pkl", "wb"))
         pickle.dump(rank_counts_array, open("rank_counts_array.pkl", "wb"))
-        tools.save_model_by_name(net_acting, f'acting_net_{int((time.time() - start_time) // 3600)}')
+        pickle.dump(policy_loss_array, open("policy_loss_array.pkl", "wb"))
+        pickle.dump(value_loss_array, open("value_loss_array.pkl", "wb"))
+        tools.save_model(net_acting, MODEL_DIR, f'last_in_hour/acting_net_{int((time.time() - start_time) // 3600)}')
         time.sleep(600) # generate more games
 
     mcts.stop()
