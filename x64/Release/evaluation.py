@@ -20,6 +20,7 @@ faulthandler.enable()
 #player = 0 -> vanilla MCTS deterministic policy (competitive play)
 #player = 1 -> acting_net MCTS deterministic policy (competitive play)
 #player = 2 -> training_net MCTS deterministic policy (competitive play)
+@torch.compile
 def play_game(process_id, net_acting, net_training, directories, n_games, search_budget = 800, player_setups = [(0,0,0,0)]):
     tools.set_process(process_id)
     torch.set_num_threads(1)

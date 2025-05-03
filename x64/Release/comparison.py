@@ -23,8 +23,6 @@ def play_game(process_id, networks, directories, n_games, search_budget = [800,8
     torch.set_num_interop_threads(1)
     for directory, players in zip(directories, player_setups):
         for p in range(4):
-            if networks[p] == None:
-                raise ValueError('Invalid network')
             if search_budget[players[p]] < 0:
                 raise ValueError('Invalid search budget')
         for game_index in range(n_games):
@@ -37,14 +35,19 @@ def play_game(process_id, networks, directories, n_games, search_budget = [800,8
                 game = games[turn]
                 net = networks[players[turn]]
                 budget = search_budget[players[turn]]
+                if net is None:
+                    budget = 16 * budget # one iteration of vanilla MCTS is 16 times faster than 1 iteration with nn
                 while budget > 0:
                     sample = game.get_evaluate_sample(8, 0)
                     sample = torch.from_numpy(sample).unsqueeze(0)
-                    with torch.no_grad():
-                        p_net, v_net = net(sample)
-                    p_out = p_net.squeeze(0).numpy()
-                    v_out = v_net.squeeze(0).numpy()
-                    budget = game.give_evaluated_sample(p_out, v_out, budget, 4.0) #c_puct = 4.0
+                    if net is None:
+                        budget = game.give_evaluated_sample(np.ones(4096), np.zeros(4), budget, 4.0) #c_puct = 4.0
+                    else:
+                        with torch.no_grad():
+                            p_net, v_net = net(sample)
+                        p_out = p_net.squeeze(0).numpy()
+                        v_out = v_net.squeeze(0).numpy()
+                        budget = game.give_evaluated_sample(p_out, v_out, budget, 4.0) #c_puct = 4.0
 
                 game = games[turn]
 
@@ -92,6 +95,8 @@ class Compare:
         directory = tools.directory_name('compare', [self.filename] + self.directories, search_budget, players)
         os.makedirs(directory, exist_ok=True)
         for net in self.networks:
+            if(net is None):
+                continue
             net.share_memory()
             net.eval()
         processes = []
@@ -139,9 +144,10 @@ class Compare:
             os.makedirs(d, exist_ok=True)
 
         for net in self.networks:
+            if(net is None):
+                continue
             net.share_memory()
-            net.eval()#.to(memory_format=torch.channels_last)
-            #net = torch.compile(net, mode='reduce-overhead', fullgraph=True, backend='inductor')
+            net.eval()
 
         setups = [
             players,
@@ -189,5 +195,3 @@ class Compare:
         for i in range(4):
             print(f'Player ({players[i]}):\t{rank_counts[i][0]}\t{rank_counts[i][1]}\t{rank_counts[i][2]}\t{rank_counts[i][3]}', flush=True)
         return moves_sum, score_sum, rewards_sum, rank_counts
-        
-    
