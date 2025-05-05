@@ -29,6 +29,8 @@
 
 #include <boost/archive/binary_oarchive.hpp>
 #include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/text_iarchive.hpp>
+#include <boost/archive/text_oarchive.hpp>
 #include <fstream>
 
 #ifdef _MSC_VER
@@ -1147,10 +1149,21 @@ struct game {
     }
 
     game(const std::string& filename) {
-        //TODO: add parent pointer set procedure to change from nullptr 
         std::ifstream ifs(filename, std::ios::binary);
-        boost::archive::binary_iarchive ia(ifs);
-        ia >> *this;
+        if (!ifs) {
+            throw std::runtime_error("Failed to open file: " + filename);
+        }
+        if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".bin") {
+            boost::archive::binary_iarchive ia(ifs);
+            ia >> *this;
+        }
+        else if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".txt") {
+            boost::archive::text_iarchive ia(ifs);
+            ia >> *this;
+        }
+        else {
+            throw std::runtime_error("Unsupported file format: " + filename);
+        }
         ifs.close();
     }
 
@@ -1431,11 +1444,26 @@ struct game {
     }
 
     void save_game(const std::string& filename) {
-        std::ofstream ofs(filename + ".tmp", std::ios::binary);
-        boost::archive::binary_oarchive oa(ofs);
-        oa << *this;
+        std::string tmp_file = filename + ".tmp";
+        std::ofstream ofs(tmp_file, std::ios::binary);
+        if (!ofs) {
+            throw std::runtime_error("Failed to open file for saving: " + tmp_file);
+        }
+
+        if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".bin") {
+            boost::archive::binary_oarchive oa(ofs);
+            oa << *this;
+        }
+        else if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".txt") {
+            boost::archive::text_oarchive oa(ofs);
+            oa << *this;
+        }
+        else {
+            throw std::runtime_error("Unsupported file format: " + filename + ". Supported types: *.bin, *.txt");
+        }
+
         ofs.close();
-        std::filesystem::rename(filename + ".tmp", filename);
+        std::filesystem::rename(tmp_file, filename);
     }
 
     std::string get_chess_com_representation() {
@@ -1705,15 +1733,10 @@ int main(int argc, char* argv[]) {
     }
 
     state s;
-    game g;
-    //auto val = g.to_numpy(1);
     s.printScore();
     s.printTurn();
     s.printBoard();
     s.printLegalMoves();
-
-    g.save_game("game.bin");
-    game g_new("game.bin");
     for (int i = 0; i < 100; i++) {
         std::cout << "Enter move (from_x from_y to_x to_y): ";
         move m;
