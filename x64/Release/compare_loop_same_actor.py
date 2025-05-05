@@ -11,7 +11,7 @@ faulthandler.enable()
 
 CPU_CORES = 22              # Number of CPU cores to use for MCTS
 BUDGET = 400                # Number of MCTS simulations per move (800 in AlphaZero)
-EVAL_GAMES = 2              # Number of games to evaluate per CPU core    
+EVAL_GAMES = 4              # Number of games to evaluate per CPU core    
 
 # folders of 4 different models
 AGENTS_DIR = [

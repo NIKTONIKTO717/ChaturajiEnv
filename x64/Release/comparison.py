@@ -91,8 +91,12 @@ class Compare:
         os.rmdir(directory)
         return moves_sum, score_sum, rewards
 
-    def run(self, search_budget = 800, players = (0,0,0,0)):
-        directory = tools.directory_name('compare', [self.filename] + self.directories, search_budget, players)
+    def run(self, search_budget = [800, 800, 800, 800], players = (0,0,0,0)):
+        if search_budget[0] == search_budget[1] == search_budget[2] == search_budget[3]:
+            search_budget_str = f'{search_budget[0]}'
+        else:
+            search_budget_str = f'{search_budget[0]}_{search_budget[1]}_{search_budget[2]}_{search_budget[3]}'
+        directory = tools.directory_name('compare', [self.filename] + self.directories, search_budget_str, players)
         os.makedirs(directory, exist_ok=True)
         for net in self.networks:
             if(net is None):
@@ -108,7 +112,7 @@ class Compare:
                         self.networks,
                         [directory],
                         self.n_games, 
-                        [search_budget,search_budget,search_budget,search_budget], 
+                        search_budget, 
                         [players]
                     )
                 )
@@ -127,7 +131,7 @@ class Compare:
             print(f'Player {i} ({players[i]}):\t{rank_counts[i][0]}\t{rank_counts[i][1]}\t{rank_counts[i][2]}\t{rank_counts[i][3]}', flush=True)
         return moves_sum, score_sum, rewards_sum, rank_counts
     
-    def run_shifting(self, search_budget = 800, players = (0,0,0,0)):
+    def run_shifting(self, search_budget = [800, 800, 800, 800], players = (0,0,0,0)):
         """
         Runs the Comparison of the network with shifting player positions.
 
@@ -138,7 +142,11 @@ class Compare:
             rewards_sum_min (np.ndarray): Minimum rewards for each player across all shifted positions (rewards_sum_min[1] = 2.3 means that for any position sum of rewards from all games played in this position is at least 2.3).
             rank_counts (np.ndarray): Counts of ranks for each player rank_counts[player_index].
         """
-        directory = tools.directory_name('compare', [self.filename] + self.directories, search_budget, players)
+        if search_budget[0] == search_budget[1] == search_budget[2] == search_budget[3]:
+            search_budget_str = f'{search_budget[0]}'
+        else:
+            search_budget_str = f'{search_budget[0]}_{search_budget[1]}_{search_budget[2]}_{search_budget[3]}'
+        directory = tools.directory_name('compare', [self.filename] + self.directories, search_budget_str, players)
         directories = [directory + '_0', directory + '_1', directory + '_2', directory + '_3']
         for d in directories:
             os.makedirs(d, exist_ok=True)
@@ -165,7 +173,7 @@ class Compare:
                         self.networks,
                         directories,
                         self.n_games, 
-                        [search_budget,search_budget,search_budget,search_budget], 
+                        search_budget, 
                         setups,
                     )
                 )
@@ -195,3 +203,5 @@ class Compare:
         for i in range(4):
             print(f'Player ({players[i]}):\t{rank_counts[i][0]}\t{rank_counts[i][1]}\t{rank_counts[i][2]}\t{rank_counts[i][3]}', flush=True)
         return moves_sum, score_sum, rewards_sum, rank_counts
+        
+    
