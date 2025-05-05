@@ -91,7 +91,7 @@ def main():
                 total_loss.backward()
                 optimizer.step()
                 
-                if(e + 1 == PASSES and i % 1 == 0):
+                if(e + 1 == PASSES and i % 100 == 0):
                     policy_loss_array.append(policy_loss.item())
                     value_loss_array.append(value_loss.item())
                     print(f"Iteration {i}: Policy Loss: {policy_loss.item():.4f}, Value Loss: {value_loss.item():.4f}, Total Loss: {total_loss.item():.4f}", flush=True)
