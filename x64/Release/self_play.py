@@ -8,8 +8,8 @@ import os
 faulthandler.enable()
 
 # === Hyperparameters ===
-CPU_CORES = 4              # Number of CPU cores to use for MCTS
-BUDGET = 40                # Number of MCTS simulations per move (800 in AlphaZero)
+CPU_CORES = 30              # Number of CPU cores to use for MCTS
+BUDGET = 400                # Number of MCTS simulations per move (800 in AlphaZero)
 SELF_PLAY_DIR = ['cache_games'] # Directory for self-play games
 MODEL_DIR = 'models' # Directory for model storage
 CHECK_INTERVAL = 60  # seconds
