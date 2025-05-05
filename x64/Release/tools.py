@@ -17,6 +17,8 @@ from network import AlphaZeroNet
 import hashlib
 faulthandler.enable()
 
+GAME_FILE_FORMAT = 'bin'  # File format for game files
+
 def set_process(process_id, info=False):
     try:
         p = psutil.Process(os.getpid())

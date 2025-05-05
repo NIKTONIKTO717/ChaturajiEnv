@@ -47,7 +47,7 @@ def run_mcts_game(process_id, net, stop_event, search_budget, use_model, hash=''
                 moves += j+1
                 break
 
-        game.save_game(f'cache_games/game_{hash}_{process_id}_{game_index}.bin')
+        game.save_game(f'cache_games/game_{hash}_{process_id}_{game_index}.{tools.GAME_FILE_FORMAT}')
     print('Process:', process_id, 'games:', game_index, f'time per move: {((time.time() - start_time) / (moves + 1)):.5g}', flush=True)
 
 class MCTS:
@@ -75,13 +75,13 @@ class MCTS:
 
     def process_samples(self, directory):
         for file in os.listdir(directory):
-            if file.endswith(".bin"):
+            if file.endswith(".bin") or file.endswith(".txt"):
                 self.game_storage.load_game(f'{directory}/{file}')
 
     def process_cache(self):
         for directory in self.directories:
             for file in os.listdir(directory):
-                if file.endswith(".bin"):
+                if file.endswith(".bin") or file.endswith(".txt"):
                     self.game_storage.load_game(f'{directory}/{file}')
                     os.remove(f'{directory}/{file}')
         print('Game storage size:', self.game_storage.size(), flush=True)

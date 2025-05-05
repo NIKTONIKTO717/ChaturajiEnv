@@ -55,7 +55,7 @@ def play_game(process_id, networks, directories, n_games, search_budget = [800,8
                 terminaleted = game.step_deterministic()
 
                 if terminaleted:
-                    game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
+                    game.save_game(f'{directory}/game_{process_id}_{game_index}.{tools.GAME_FILE_FORMAT}')
                     break
                 else:
                     last_action = game.get_action(-1)

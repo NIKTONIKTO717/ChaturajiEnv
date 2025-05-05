@@ -65,7 +65,7 @@ def play_game(process_id, net_acting, net_training, directories, n_games, search
                     terminaleted = game.step_deterministic()
 
                 if terminaleted:
-                    game.save_game(f'{directory}/game_{process_id}_{game_index}.bin')
+                    game.save_game(f'{directory}/game_{process_id}_{game_index}.{tools.GAME_FILE_FORMAT}')
                     break
                 else:
                     last_action = game.get_action(-1)
