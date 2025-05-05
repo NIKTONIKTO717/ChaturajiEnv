@@ -56,7 +56,7 @@ def main():
         score_sum_sum = [0,0,0,0]
         for i in range(4):
             networks.append(AlphaZeroNet((173,8,8), 4096, 8, 32, 32))
-            networks[i].load_state_dict(torch.load(AGENTS_DIR[i] + '/' + file + '.pickle'))
+            networks[i].load_state_dict(torch.load(AGENTS_DIR[i] + '/' + file + '.pkl'))
         compare = Compare(networks, AGENTS_DIR, file, CPU_CORES, EVAL_GAMES)
         for setup in [(0,1,2,3), (0,1,3,2), (0,2,1,3), (0,2,3,1), (0,3,1,2), (0,3,2,1)]:
             print('Comparing agents:', setup)
@@ -70,11 +70,11 @@ def main():
         score_sum_array.append(score_sum_sum)
         print('Time taken:', time.time() - start_time)
 
-    with open('rewards_gens_array.pickle', 'wb') as f:
+    with open('rewards_gens_array.pkl', 'wb') as f:
         pickle.dump(rewards_gens_array, f)
-    with open('moves_sum_array.pickle', 'wb') as f:
+    with open('moves_sum_array.pkl', 'wb') as f:
         pickle.dump(moves_sum_array, f)
-    with open('score_sum_array.pickle', 'wb') as f:
+    with open('score_sum_array.pkl', 'wb') as f:
         pickle.dump(score_sum_array, f)
 
     rewards_by_agent = list(zip(*rewards_gens_array))

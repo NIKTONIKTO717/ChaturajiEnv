@@ -32,6 +32,9 @@ SELF_PLAY_DIR = ['cache_games', 'C:/Users/jasom/source/repos/ChaturajiEnv2/x64/R
 MODEL_DIR = 'C:/Users/jasom/source/repos/ChaturajiEnv2/x64/Release/models' # Directory for model storage
 SELF_PLAY = True # True if you want to generate self-play games
 PRELOAD_MODEL_FILE = 'mcts_preload.pkl' # Preload model file for acting network
+ADJUST_SAMPLING_RATIO = True # Adjust sampling ratio based on rewards
+WINRATE_SAMPLING = True      # Adjust sampling ratio based on winrate
+EXPERIMENT_ID = 'without_modifcation_' # Experiment ID for logging
 
 def main():
     start_time = time.time()
@@ -68,7 +71,10 @@ def main():
         print(f"Training network gen {l}", flush=True)
         mcts.process_cache()
         for i in range(ITERATIONS): #from alpha zero - checkpoint every 1000 steps
-            samples, policies, values = mcts.get_batch(BATCH_SIZE, None, False, 0.5) # sampling_ratio
+            if ADJUST_SAMPLING_RATIO:
+                samples, policies, values = mcts.get_batch(BATCH_SIZE, sampling_ratio, WINRATE_SAMPLING, 0.5) # sampling_ratio
+            else:
+                samples, policies, values = mcts.get_batch(BATCH_SIZE, None, WINRATE_SAMPLING, 0.5)
             samples = torch.tensor(samples, dtype=torch.float32, device=device_training)
             policies = torch.tensor(policies, dtype=torch.float32, device=device_training)
             values = torch.tensor(values, dtype=torch.float32, device=device_training)
@@ -112,12 +118,20 @@ def main():
         #rewards_array.append(rewards_sum)
         #rank_counts_array.append(rank_counts)
 
-        #tau = 1.0
-        #rewards_exp = np.exp(-rewards / (tau * CPU_CORES * 2)) # normalize by number of games
-        #sampling_ratio = rewards_exp / np.sum(rewards_exp)
-        #print(f"Sampling ratio: {sampling_ratio}")
-
-       
+        if ADJUST_SAMPLING_RATIO:
+            #### EVAL AGAINST PREVIOUS ####
+            moves_sum_0, score_sum_0, rewards_sum_0, rank_counts_0 = evaluator.run(BUDGET, (2, 1, 1, 1)) # acting_net vs training_net
+            moves_sum_1, score_sum_1, rewards_sum_1, rank_counts_1 = evaluator.run(BUDGET, (1, 2, 1, 1)) # acting_net vs training_net
+            moves_sum_2, score_sum_2, rewards_sum_2, rank_counts_2 = evaluator.run(BUDGET, (1, 1, 2, 1)) # acting_net vs training_net
+            moves_sum_3, score_sum_3, rewards_sum_3, rank_counts_3 = evaluator.run(BUDGET, (1, 1, 1, 2)) # acting_net vs training_net
+            rewards = np.array([rewards_sum_0[0], rewards_sum_1[1], rewards_sum_2[2], rewards_sum_3[3]])
+            #### EVAL AGAINST ITSELF ####
+            #moves_sum, score_sum, rewards_sum, rank_counts = evaluator.run(BUDGET, (2, 2, 2, 2)) # acting_net vs itself
+            #rewards = np.array([rewards_sum[0], rewards_sum[1], rewards_sum[2], rewards_sum[3]])
+            tau = 1.0
+            rewards_exp = np.exp(-rewards / (tau * CPU_CORES * EVAL_GAMES)) # normalize by number of games
+            sampling_ratio = rewards_exp / np.sum(rewards_exp)
+            print(f"Sampling ratio: {sampling_ratio}")       
         
         #copy if better to acting network
         #if rewards_sum[0] >= 6: # maximum is +60
@@ -127,7 +141,7 @@ def main():
         if True:
             net_acting.load_state_dict(net_training.state_dict())
             tools.save_model(net_acting, MODEL_DIR)
-            with open("log.txt", "a") as file:
+            with open(f'{EXPERIMENT_ID}log.txt', "a") as file:
                 file.write(f"pickle: Training network gen {l} - {tools.get_model_hash(net_training)} pickled\n")
         else:
             net_training.load_state_dict(net_acting.state_dict())
@@ -135,13 +149,13 @@ def main():
             mcts.start()
 
         #pickle python arrays
-        pickle.dump(moves_array, open("moves_array.pkl", "wb"))
-        pickle.dump(score_array, open("score_array.pkl", "wb"))
-        pickle.dump(rewards_array, open("rewards_array.pkl", "wb"))
-        pickle.dump(rank_counts_array, open("rank_counts_array.pkl", "wb"))
-        pickle.dump(policy_loss_array, open("policy_loss_array.pkl", "wb"))
-        pickle.dump(value_loss_array, open("value_loss_array.pkl", "wb"))
-        tools.save_model(net_acting, MODEL_DIR, f'last_in_hour/acting_net_{int((time.time() - start_time) // 3600)}')
+        pickle.dump(moves_array, open(f'{EXPERIMENT_ID}moves_array.pkl', "wb"))
+        pickle.dump(score_array, open(f'{EXPERIMENT_ID}"score_array.pkl', "wb"))
+        pickle.dump(rewards_array, open(f'{EXPERIMENT_ID}rewards_array.pkl', "wb"))
+        pickle.dump(rank_counts_array, open(f'{EXPERIMENT_ID}rank_counts_array.pkl', "wb"))
+        pickle.dump(policy_loss_array, open(f'{EXPERIMENT_ID}policy_loss_array.pkl', "wb"))
+        pickle.dump(value_loss_array, open(f'{EXPERIMENT_ID}value_loss_array.pkl', "wb"))
+        tools.save_model(net_acting, MODEL_DIR, f'last_in_hour/{EXPERIMENT_ID}acting_net_{int((time.time() - start_time) // 3600)}')
         time.sleep(600) # generate more games
 
     mcts.stop()

@@ -19,7 +19,7 @@ def random_filename(n = 10):
     return ''.join(random.choices(string.ascii_letters + string.digits, k=n))
 
 def run_mcts_game(process_id, n_games, search_budget = 800):
-    tools.set_process(process_id, False)
+    tools.set_process(process_id)
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
     start_time = time.time()
