@@ -1,6 +1,8 @@
 #include <cstdint>
 #include <cmath>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <bitset>
 #include <cassert>
 #include <vector>
@@ -15,6 +17,7 @@
 #include <numeric>
 #include <filesystem>
 #include <random>
+#include <zip.h>
 #include <Python.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
@@ -31,7 +34,6 @@
 #include <boost/archive/binary_iarchive.hpp>
 #include <boost/archive/text_iarchive.hpp>
 #include <boost/archive/text_oarchive.hpp>
-#include <fstream>
 
 #ifdef _MSC_VER
 #  include <intrin.h>
@@ -1149,22 +1151,35 @@ struct game {
     }
 
     game(const std::string& filename) {
-        std::ifstream ifs(filename, std::ios::binary);
-        if (!ifs) {
-            throw std::runtime_error("Failed to open file: " + filename);
+        auto ext = filename.substr(filename.size() - 4);
+
+        if (ext == ".bin") {
+            std::ifstream ifs(filename, std::ios::binary);
+            if (ifs) boost::archive::binary_iarchive(ifs) >> *this;
         }
-        if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".bin") {
-            boost::archive::binary_iarchive ia(ifs);
-            ia >> *this;
+        else if (ext == ".txt") {
+            std::ifstream ifs(filename, std::ios::binary);
+            if (ifs) boost::archive::text_iarchive(ifs) >> *this;
         }
-        else if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".txt") {
-            boost::archive::text_iarchive ia(ifs);
-            ia >> *this;
+        else if (ext == ".zip") {
+            int err = 0;
+            zip_stat_t stat;
+            zip_stat_init(&stat);
+            zip_t* archive = zip_open(filename.c_str(), ZIP_RDONLY, &err);
+            zip_file_t* file = zip_fopen(archive, "game.txt", 0);
+            if (file) {
+                zip_stat(archive, "game.txt", 0, &stat);
+                std::string buffer(stat.size, '\0');
+                zip_fread(file, buffer.data(), stat.size);
+                std::istringstream iss(buffer);
+                boost::archive::text_iarchive(iss) >> *this;
+                zip_fclose(file);
+            }
+            else 
+                throw std::runtime_error("Unsupported zip file.");
+            zip_close(archive);
         }
-        else {
-            throw std::runtime_error("Unsupported file format: " + filename);
-        }
-        ifs.close();
+        else throw std::runtime_error("Unsupported file format: " + filename);
     }
 
     void print() {
@@ -1445,25 +1460,37 @@ struct game {
 
     void save_game(const std::string& filename) {
         std::string tmp_file = filename + ".tmp";
-        std::ofstream ofs(tmp_file, std::ios::binary);
-        if (!ofs) {
-            throw std::runtime_error("Failed to open file for saving: " + tmp_file);
-        }
+        auto ext = filename.substr(filename.size() - 4);
 
-        if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".bin") {
-            boost::archive::binary_oarchive oa(ofs);
-            oa << *this;
+        if (ext == ".bin" || ext == ".txt") {
+            std::ofstream ofs;
+            ofs.open(tmp_file, std::ios::binary);
+            if (!ofs) throw std::runtime_error("Failed to open file for saving: " + tmp_file);
+            if (ext == ".bin") {
+                boost::archive::binary_oarchive oa(ofs);
+                oa << *this;
+            }
+            else {
+                boost::archive::text_oarchive oa(ofs);
+                oa << *this;
+            }
+            ofs.close();
+            std::filesystem::rename(tmp_file, filename);
         }
-        else if (filename.size() >= 4 && filename.substr(filename.size() - 4) == ".txt") {
-            boost::archive::text_oarchive oa(ofs);
-            oa << *this;
-        }
-        else {
-            throw std::runtime_error("Unsupported file format: " + filename + ". Supported types: *.bin, *.txt");
-        }
+        else if (ext == ".zip") {
+            std::ostringstream oss;
+            boost::archive::text_oarchive(oss) << *this;
+            std::string data = oss.str();
 
-        ofs.close();
-        std::filesystem::rename(tmp_file, filename);
+            int error = 0;
+            zip_t* archive = zip_open(tmp_file.c_str(), ZIP_CREATE | ZIP_TRUNCATE, &error);
+            if (!archive) throw std::runtime_error("Failed to open file for saving: " + tmp_file);
+            zip_source_t* source = zip_source_buffer(archive, data.data(), data.size(), 0);
+            zip_file_add(archive, "game.txt", source, ZIP_FL_ENC_UTF_8);
+            zip_close(archive);
+            std::filesystem::rename(tmp_file, filename);
+        }
+        else throw std::runtime_error("Unsupported file format: " + filename + ". Supported: .bin, .txt, .zip");
     }
 
     std::string get_chess_com_representation() {

@@ -19,7 +19,6 @@ def get_latest_model_path(model_dir):
     if not models:
         return None
     models.sort(key=lambda f: os.path.getmtime(os.path.join(model_dir, f)), reverse=True)
-    print(models)
     return os.path.join(model_dir, models[0])
 
 def main():
