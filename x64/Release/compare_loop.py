@@ -50,13 +50,12 @@ def main():
                 networks.append(None)
             else:
                 networks.append(AlphaZeroNet((173,8,8), 4096, 8, 32, 32))
-                networks[i].load_state_dict(torch.load(AGENTS_DIR[i] + '/' + file + '.pickle'))
+                networks[i].load_state_dict(torch.load(AGENTS_DIR[i] + '/' + file + '.pkl'))
         #networks[3] = None # last one is MCTS
         compare = Compare(networks, AGENTS_DIR, file, CPU_CORES, EVAL_GAMES)
         for setup in [(0,1,2,3), (0,1,3,2), (0,2,1,3), (0,2,3,1), (0,3,1,2), (0,3,2,1)]:
             print('Comparing agents:', setup)
-            budget_setup = [BUDGET[i] for i in setup]
-            moves_sum, score_sum, rewards_sum, rank_counts = compare.run_shifting(budget_setup, setup)
+            moves_sum, score_sum, rewards_sum, rank_counts = compare.run_shifting(BUDGET, setup)
             moves_sum_array.append(moves_sum)
             rewards_sum_reordered = [rewards_sum[setup.index(i)] for i in range(4)]
             score_sum_reordered = [score_sum[setup.index(i)] for i in range(4)]

@@ -75,13 +75,13 @@ class MCTS:
 
     def process_samples(self, directory):
         for file in os.listdir(directory):
-            if file.endswith(".bin") or file.endswith(".txt"):
+            if file.endswith(".bin") or file.endswith(".txt") or file.endswith(".zip"):
                 self.game_storage.load_game(f'{directory}/{file}')
 
     def process_cache(self):
         for directory in self.directories:
             for file in os.listdir(directory):
-                if file.endswith(".bin") or file.endswith(".txt"):
+                if file.endswith(".bin") or file.endswith(".txt") or file.endswith(".zip"):
                     self.game_storage.load_game(f'{directory}/{file}')
                     os.remove(f'{directory}/{file}')
         print('Game storage size:', self.game_storage.size(), flush=True)

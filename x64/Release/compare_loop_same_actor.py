@@ -44,7 +44,7 @@ def main():
         score_sum_array = []
         for file in PICKLE_FILES:
             net_acting = AlphaZeroNet((173,8,8), 4096, 8, 32, 32).to('cpu')
-            net_acting.load_state_dict(torch.load(agent + '/' + file + '.pickle'))
+            net_acting.load_state_dict(torch.load(agent + '/' + file + '.pkl'))
             evaluator = Eval(net_acting, net_acting, CPU_CORES, EVAL_GAMES)
             moves_sum, score_sum, rewards_sum, rank_counts = evaluator.run(BUDGET, (1, 1, 1, 1))
             moves_sum_array.append(moves_sum)
