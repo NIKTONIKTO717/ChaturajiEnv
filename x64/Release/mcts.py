@@ -1,20 +1,12 @@
 import chaturajienv
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import threading
-import random
 import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
 import torch.multiprocessing as multiprocessing
 import time
 import faulthandler
 import psutil
 import os
 import tools
-import pybind11
-from network import AlphaZeroNet
 faulthandler.enable()
 
 def run_mcts_game(process_id, net, stop_event, search_budget, use_model, hash=''):

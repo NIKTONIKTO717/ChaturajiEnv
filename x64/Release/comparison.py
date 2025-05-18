@@ -1,18 +1,9 @@
 import chaturajienv
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import threading
-import random
 import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
 import torch.multiprocessing as multiprocessing
-import time
 import faulthandler
-import psutil
 import os
-from network import AlphaZeroNet
 import tools
 faulthandler.enable()
 
@@ -51,10 +42,10 @@ def play_game(process_id, networks, directories, n_games, search_budget = [800,8
 
                 game = games[turn]
 
-                terminaleted = False
-                terminaleted = game.step_deterministic()
+                terminated = False
+                terminated = game.step_deterministic()
 
-                if terminaleted:
+                if terminated:
                     game.save_game(f'{directory}/game_{process_id}_{game_index}.{tools.GAME_FILE_FORMAT}')
                     break
                 else:

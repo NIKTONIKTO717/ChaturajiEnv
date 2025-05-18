@@ -1,13 +1,7 @@
 import torch
-import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import threading
-import random
 import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-import multiprocessing
 import time
 import faulthandler
 from network import AlphaZeroNet
@@ -24,17 +18,17 @@ BATCH_SIZE = 2048           # Recommended: 512-2048 (depending on memory)
 L2_REG = 1e-4               # Weight decay (L2 regularization) to prevent overfitting
 ITERATIONS = 1000           # Number of training iterations per evaluation
 PASSES = 1                  # Adjust as needed
-CPU_CORES = 20              # Number of CPU cores to use for MCTS
+CPU_CORES = 22              # Number of CPU cores to use for MCTS
 STORAGE_SIZE = 5000         # Number of games to store in the game storage
 BUDGET = 400                # Number of MCTS simulations per move (800 in AlphaZero)
 EVAL_GAMES = 2              # Number of games to evaluate per CPU core    
-SELF_PLAY_DIR = ['cache_games'] # Directory for self-play games
-MODEL_DIR = 'models' # Directory for model storage
-SELF_PLAY = True # True if you want to generate self-play games
+SELF_PLAY_DIR = ['cache_games', '//n68ad57.mevnode.com/selfplay1/cache_games'] # Directory for self-play games
+MODEL_DIR = '//n68ad57.mevnode.com/selfplay1/models' # Directory for model storage
+SELF_PLAY = False           # True if you want to generate self-play games
 PRELOAD_MODEL_FILE = 'no_eval_preload.pkl' # Preload model file for acting network
 ADJUST_SAMPLING_RATIO = True # Adjust sampling ratio based on rewards
 WINRATE_SAMPLING = True      # Adjust sampling ratio based on winrate
-EXPERIMENT_ID = 'without_modifcation_' # Experiment ID for logging
+EXPERIMENT_ID = 'both_samplings_' # Experiment ID for logging
 
 def main():
     start_time = time.time()
@@ -150,7 +144,7 @@ def main():
 
         #pickle python arrays
         pickle.dump(moves_array, open(f'{EXPERIMENT_ID}moves_array.pkl', "wb"))
-        pickle.dump(score_array, open(f'{EXPERIMENT_ID}"score_array.pkl', "wb"))
+        pickle.dump(score_array, open(f'{EXPERIMENT_ID}score_array.pkl', "wb"))
         pickle.dump(rewards_array, open(f'{EXPERIMENT_ID}rewards_array.pkl', "wb"))
         pickle.dump(rank_counts_array, open(f'{EXPERIMENT_ID}rank_counts_array.pkl', "wb"))
         pickle.dump(policy_loss_array, open(f'{EXPERIMENT_ID}policy_loss_array.pkl', "wb"))
